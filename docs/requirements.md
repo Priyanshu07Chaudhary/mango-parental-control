@@ -114,7 +114,7 @@ The service shall support:
 - unlinking schedules from groups
 - generating parental-control `config-raw`
 - returning `200 OK` for all successful writes
-- returning generated non-empty `config-raw` only when device-side configuration changes
+- returning generated `config-raw` only when device-side configuration changes
 - returning stored parental-control objects
 - maximum `20` groups per subscriber
 - maximum `20` schedules per subscriber
@@ -142,8 +142,7 @@ Write Behavior shall be idempotent at the effective policy level.
 - unchanged effective policy shall produce a response body that does not include `config-raw`
 - changed effective policy shall produce a full parental-control `config-raw` snapshot
 - returned `config-raw`, when present, shall contain the complete parental-control-owned snapshot for the subscriber
-- `config-raw` shall never be an empty array
-- if the effective parental-control snapshot is empty, the response body shall not include `config-raw`
+- when the effective parental-control snapshot becomes empty, the response body shall include `config-raw` as an empty array `[]` to signal that all parental-control-owned sections should be cleared on the device
 - device reassignment shall occur by removing the device from the current group and then adding it to the target group. Adding a MAC already assigned to another group for the same subscriber shall reject the request with a 409 Conflict error, and the caller must delete the MAC from the old group first.
 
 ---

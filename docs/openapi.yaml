@@ -713,7 +713,6 @@ components:
               enum: [INTERNET]
             target_value:
               type: string
-              enum: [null]
               nullable: true
               description: Must be `null` when `target_kind = INTERNET`.
     ScheduleCreateAppRequest:
@@ -782,7 +781,6 @@ components:
               enum: [INTERNET]
             target_value:
               type: string
-              enum: [null]
               nullable: true
               description: Must be `null` when `target_kind = INTERNET`.
     SchedulePutAppRequest:
