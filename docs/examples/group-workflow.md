@@ -271,7 +271,14 @@ Expected response:
  "schedule_id": "30000000-0000-0000-0000-000000000001",
  "config-raw": [
  ["set", "firewall.pc_rule_g001_s001_internet", "rule"],
+ ["set", "firewall.pc_rule_g001_s001_internet.name", "PC_Block_g001_s001_Internet"],
  ["set", "firewall.pc_rule_g001_s001_internet.enabled", "1"],
+ ["set", "firewall.pc_rule_g001_s001_internet.dest", "up0v0"],
+ ["set", "firewall.pc_rule_g001_s001_internet.src", "down1v0"],
+ ["set", "firewall.pc_rule_g001_s001_internet.target", "REJECT"],
+ ["set", "firewall.pc_rule_g001_s001_internet.start_time", "21:00:00"],
+ ["set", "firewall.pc_rule_g001_s001_internet.stop_time", "09:00:00"],
+ ["set", "firewall.pc_rule_g001_s001_internet.weekdays", "Mon Tue Wed Thu Fri"],
  ["add_list", "firewall.pc_rule_g001_s001_internet.src_mac", "B4:6A:D4:45:E9:5C"]
  ]
 }
@@ -327,8 +334,12 @@ Expected response:
 
 ```json
 {
+ "id": "30000000-0000-0000-0000-000000000001",
+ "subscriber_id": "11111111-1111-1111-1111-111111111111",
  "schedule_config_index": 1,
- "enabled": false
+ "name": "S-A_Schedule_night_weekday",
+ "enabled": false,
+ "config-raw": []
 }
 ```
 
@@ -365,7 +376,7 @@ Expected response:
 - creating or renaming a group does not by itself generate config
 - creating or renaming a schedule does not by itself generate config
 - active config starts only when a group has devices and an enabled linked schedule
-- disabling an active schedule returns non-empty `config-raw` only when active parental-control sections still remain after the write
-- removing the last device from an active group returns non-empty `config-raw` only when active parental-control sections still remain after the write
+- disabling the last active schedule (or removing the last device/link) returns `"config-raw": []` to clear the device
+- removing a device, link, or schedule when the policy was already empty produces no change and thus omits `config-raw`
 - no-change writes return `200 OK` and the response body does not include `config-raw`
 - failed writes return normal API error responses

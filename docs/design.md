@@ -469,8 +469,7 @@ The generated payload contract shall be:
 - The service intentionally standardizes successful create, update, and delete operations on `200 OK` instead of using `201 Created` for create operations.
 - Successful write responses that produce no device-side change shall not include `config-raw` in the response body.
 - `config-raw`, when present on a successful write response, shall be the complete parental-control-owned snapshot for the subscriber.
-- `config-raw` shall never be an empty array.
-- If the effective parental-control snapshot is empty, the response body shall not include `config-raw`.
+- When the effective parental-control snapshot becomes empty, the response body shall include `config-raw` as an empty array `[]` to signal that all parental-control-owned sections should be cleared on the device.
 - `config-raw` shall be an ordered array of command tuples.
 - Command ordering shall be deterministic for identical effective subscriber policy state.
 - Parent object paths shall be created before child paths.
@@ -491,7 +490,7 @@ Config-rendering rules:
 - If a group has no linked schedules, no active config may be required for that group.
 - If a write operation changes effective generated policy, `config-raw` shall contain the complete rendered snapshot after the write.
 - If a write operation does not change effective generated policy, the successful response body shall not include `config-raw`.
-- If the effective policy is empty after the write, the successful response body shall not include `config-raw`.
+- If the effective policy becomes empty after the write, the successful response body shall include `config-raw` as an empty array `[]`.
 - `target_kind = INTERNET` shall not emit a `target_value` command.
 - For `target_kind = APP`, the `target_value` specifies the application identifier (such as YOUTUBE) to lookup its target-specific config-raw templates (domain lists, ipsets, and firewall rules) rather than emitting a literal `target_value` option command.
 - Unsupported rule combinations shall be rejected rather than partially rendered.
