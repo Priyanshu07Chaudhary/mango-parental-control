@@ -625,7 +625,7 @@ Example:
 | `config_generation_failed` | Service failed to render config-raw |
 | `storage_failure` | Database read or write failed |
 | `unauthorized` | Request is not authorized |
-| `conflict` | The request conflicts with current state (e.g. MAC address already assigned to another group) |
+| `device_already_assigned` | The request conflicts with current state (e.g. MAC address already assigned to another group) |
 
 ---
 

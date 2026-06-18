@@ -334,6 +334,13 @@ The renderer shall emit commands in deterministic order:
 5. scalar `set` commands before `add_list` commands for the same section
 6. repeated list values in normalized ascending order
 
+Within a single section, the scalar `set` commands shall be ordered consistently across all templates:
+1. `name`
+2. `enabled`
+3. Network fields (`src`, `dest`, `family`, `proto`, `ipset`, `target`) in alphabetical order of their property names
+4. Time fields (`start_time`, `stop_time`)
+5. Weekdays (`weekdays`)
+
 ### 7.4 MAC Ordering
 
 MAC lists inside a rendered rule shall be emitted in normalized ascending MAC order.
@@ -473,6 +480,7 @@ The group firewall rule shall include:
 
 - section type `rule`
 - deterministic rule name from config indexes
+- `enabled` set to `"1"`
 - `src` resolved from deployment defaults
 - `dest` resolved from deployment defaults
 - `target` resolved from deployment defaults
@@ -508,14 +516,14 @@ When shared target-level sections are used, their lifecycle shall be computed ag
  ["set", "firewall.pc_app_youtube_ipset.name", "yt_domains"],
  ["set", "firewall.pc_rule_g001_s004_youtube", "rule"],
  ["set", "firewall.pc_rule_g001_s004_youtube.name", "PC_Block_g001_s004_YouTube"],
- ["set", "firewall.pc_rule_g001_s004_youtube.src", "down1v0"],
+ ["set", "firewall.pc_rule_g001_s004_youtube.enabled", "1"],
  ["set", "firewall.pc_rule_g001_s004_youtube.dest", "up0v0"],
  ["set", "firewall.pc_rule_g001_s004_youtube.ipset", "yt_domains"],
+ ["set", "firewall.pc_rule_g001_s004_youtube.src", "down1v0"],
  ["set", "firewall.pc_rule_g001_s004_youtube.target", "REJECT"],
  ["set", "firewall.pc_rule_g001_s004_youtube.start_time", "07:54:00"],
  ["set", "firewall.pc_rule_g001_s004_youtube.stop_time", "13:30:00"],
  ["set", "firewall.pc_rule_g001_s004_youtube.weekdays", "Sun Mon Tue Wed Thu Fri Sat"],
- ["set", "firewall.pc_rule_g001_s004_youtube.enabled", "1"],
  ["add_list", "firewall.pc_rule_g001_s004_youtube.src_mac", "1A:F3:33:86:97:0A"],
  ["add_list", "firewall.pc_rule_g001_s004_youtube.src_mac", "B4:6A:D4:45:E9:5C"]
  ]
