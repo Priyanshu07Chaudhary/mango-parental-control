@@ -63,23 +63,20 @@ Successful write responses shall return `200 OK`.
 
 The service intentionally standardizes successful create, update, and delete operations on `200 OK` instead of using `201 Created` for create operations.
 
-If device-side enforcement changes and the resulting parental-control-owned snapshot is non-empty, the response shall include `config-raw` containing the full parental-control-owned snapshot after the write.
+If device-side enforcement changes, the response shall include `config-raw` containing the full parental-control-owned snapshot after the write. If the resulting snapshot is empty, `config-raw` shall contain an empty array `[]`.
 
 ### 3.2 When `config-raw` Is Omitted
 
 The response body shall not include `config-raw` when:
 
 - device-side enforcement does not change
-- the resulting parental-control-owned snapshot is empty
 - the request fails validation or cannot be processed
 
 Failed requests shall return an error response instead of `config-raw`.
 
-### 3.3 Non-Empty Rule
+### 3.3 Empty Snapshot Rule
 
-`config-raw` shall never be an empty array.
-
-When no rendered parental-control commands remain, the response body shall omit the `config-raw` property.
+When the resulting parental-control-owned snapshot is empty (no active parental-control commands remain), the response body shall include `config-raw` as an empty array `[]` to signal that all parental-control-owned sections should be cleared on the device.
 
 ---
 
@@ -193,7 +190,7 @@ Changing only display metadata shall not require config generation.
 
 ### 6.1 Full Snapshot Requirement
 
-The service shall return a full snapshot of all parental-control-owned `config-raw` after each write that changes effective device-side enforcement and leaves a non-empty parental-control-owned snapshot.
+The service shall return a full snapshot of all parental-control-owned `config-raw` after each write that changes effective device-side enforcement.
 
 Every active parental-control-owned section required after the write shall be returned.
 
@@ -207,7 +204,7 @@ If a partial payload is returned, omitted parental-control-owned sections may be
 
 ### 6.3 Empty Snapshot Behavior
 
-If the resulting parental-control-owned snapshot is empty, the response body shall not include `config-raw`.
+If the resulting parental-control-owned snapshot is empty, the response body shall include `config-raw` as an empty array `[]`.
 
 ---
 
@@ -549,9 +546,7 @@ The comparison shall use the fully ordered rendered command list.
 
 If the newly rendered snapshot is identical to the previously rendered snapshot, the successful response body shall not include `config-raw`.
 
-If the newly rendered snapshot differs and is non-empty, the successful response body shall include `config-raw`.
-
-If the newly rendered snapshot is empty, the successful response body shall not include `config-raw`.
+If the newly rendered snapshot differs, the successful response body shall include `config-raw`.
 
 ---
 
@@ -587,8 +582,6 @@ sort commands using deterministic command ordering rules
 compare rendered snapshot with previous rendered snapshot
 
 if unchanged:
- omit config-raw
-else if rendered snapshot is empty:
  omit config-raw
 else:
  return config-raw
@@ -663,9 +656,14 @@ No delete command shall be emitted for inactive rules.
 
 ### 12.4 No Active Rules Remaining
 
-If no active parental-control sections remain after the write, the successful response body shall not include `config-raw`.
+If no active parental-control sections remain after the write (and active rules previously existed), the successful response body shall include `config-raw` as an empty array `[]` to signal that all parental-control-owned sections should be cleared on the device.
 
-The service shall not return an empty `config-raw` array.
+Example:
+```json
+{
+ "config-raw": []
+}
+```
 
 ---
 
