@@ -12,12 +12,12 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SYSTEM_URI_PRIVATE", "https://localhost:17008")
 	t.Setenv("SYSTEM_URI_PUBLIC", "https://localhost:16008")
 	t.Setenv("DISCOVERY_TOPIC", "service_events")
- 
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("expected no error loading configuration defaults, got: %v", err)
 	}
- 
+
 	tests := []struct {
 		got, want any
 		name      string
