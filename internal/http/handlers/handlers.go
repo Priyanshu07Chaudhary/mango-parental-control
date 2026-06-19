@@ -94,8 +94,13 @@ func validateScheduleRequest(req models.ScheduleRequest, isUpdate bool) (string,
 	if req.TargetKind == "INTERNET" && req.TargetValue != nil {
 		return "invalid_request", fmt.Errorf("target_value must be null for INTERNET")
 	}
-	if req.TargetKind == "APP" && (req.TargetValue == nil || *req.TargetValue == "") {
-		return "invalid_request", fmt.Errorf("target_value is required for APP")
+	if req.TargetKind == "APP" {
+		if req.TargetValue == nil || *req.TargetValue == "" {
+			return "invalid_request", fmt.Errorf("target_value is required for APP")
+		}
+		if strings.ToUpper(*req.TargetValue) != "YOUTUBE" {
+			return "invalid_request", fmt.Errorf("Only YOUTUBE (case-insensitive) is supported for APP schedules")
+		}
 	}
 	return "", nil
 }

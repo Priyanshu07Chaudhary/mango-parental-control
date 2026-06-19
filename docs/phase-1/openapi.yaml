@@ -727,7 +727,7 @@ components:
             target_value:
               type: string
               minLength: 1
-              description: Required non-empty application identifier when `target_kind = APP`.
+              description: Required application identifier when `target_kind = APP`. For Phase 1, only "YOUTUBE" is supported (case-insensitive).
     ScheduleCreateRequest:
       description: Create request. INTERNET schedules must send `target_value = null`. APP schedules must send a non-empty `target_value`. `start_minute` and `stop_minute` must not be equal. `weekdays` values must be distinct. Schedule times are interpreted in the gateway/router local timezone.
       oneOf:
@@ -795,7 +795,7 @@ components:
             target_value:
               type: string
               minLength: 1
-              description: Required non-empty application identifier when `target_kind = APP`.
+              description: Required application identifier when `target_kind = APP`. For Phase 1, only "YOUTUBE" is supported (case-insensitive).
     SchedulePutRequest:
       description: Full replacement request. `PUT` requests must send the complete mutable schedule representation. `start_minute` and `stop_minute` must not be equal. `weekdays` values must be distinct. Schedule times are interpreted in the gateway/router local timezone.
       oneOf:

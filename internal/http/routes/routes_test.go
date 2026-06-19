@@ -360,6 +360,22 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
+			ID:             "TC-CREATE-SCH-006-INVALID-APP",
+			Desc:           "Target value is not YOUTUBE when target_kind is APP",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"App Invalid Value","action_type":"BLOCK","target_kind":"APP","target_value":"netflix","start_minute":120,"stop_minute":240,"weekdays":[0]}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-CREATE-SCH-006-VALID-APP",
+			Desc:           "Target value is YouTube (case-insensitive) when target_kind is APP",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"App Valid YouTube","action_type":"BLOCK","target_kind":"APP","target_value":"YouTube","start_minute":120,"stop_minute":240,"weekdays":[0]}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
 			ID:             "TC-CREATE-SCH-007",
 			Desc:           "Start minute equals stop minute",
 			Method:         http.MethodPost,
