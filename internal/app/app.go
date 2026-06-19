@@ -95,6 +95,7 @@ func New(ctx context.Context, cfg *config.Config, rootLog *slog.Logger) (*App, e
 	}
 
 	module, err := apphttp.NewModule(apphttp.Dependencies{
+		DB:                database,
 		ServerLogger:      logger.Subsystem("server"),
 		ServerConfig:      cfg.Server,
 		SubsystemConfig:   cfg.Subsystem.Config,

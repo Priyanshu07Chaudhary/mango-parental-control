@@ -1,0 +1,74 @@
+name: Go Continuous Integration
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Verify Module Dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Check Code Formatting
+        run: |
+          unformatted=$(find . -name "*.go" -not -path "*/vendor/*" -not -path "*/tmp_test/*" -print0 | xargs -0 -r gofmt -l)
+          if [ -n "$unformatted" ]; then
+            echo "The following files are not formatted properly:"
+            echo "$unformatted"
+            echo "Please run 'gofmt -w .' on your local files."
+            exit 1
+          fi
+
+      - name: Run Unit Tests
+        run: |
+          # Mock the required environment variables enforced by the discovery and logger libraries
+          export SERVICE_NAME="mango-parental-control"
+          export SERVICE_TYPE="mango-parental-control"
+          export SERVICE_VERSION="dev"
+          export SYSTEM_URI_PRIVATE="https://localhost:17008"
+          export SYSTEM_URI_PUBLIC="https://localhost:16008"
+          export DISCOVERY_TOPIC="service_events"
+          export STORAGE_TYPE=postgresql
+          export STORAGE_TYPE_POSTGRESQL_HOST=127.0.0.1
+          export STORAGE_TYPE_POSTGRESQL_PORT=5432
+          export STORAGE_TYPE_POSTGRESQL_USERNAME=postgres
+          export STORAGE_TYPE_POSTGRESQL_PASSWORD=postgres
+          export STORAGE_TYPE_POSTGRESQL_DATABASE=postgres
+          export STORAGE_TYPE_POSTGRESQL_SSLMODE=disable
+          
+          go test -v -race ./...
+
+      - name: Compile Binary
+        run: |
+          make build

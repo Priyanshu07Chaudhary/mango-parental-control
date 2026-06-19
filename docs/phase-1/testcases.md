@@ -122,7 +122,8 @@ Endpoints:
 | TC-CREATE-SCH-006 | Target value missing/empty when target_kind is APP | `400 Bad Request` |
 | TC-CREATE-SCH-007 | Start minute equals stop minute | `400 Bad Request` |
 | TC-CREATE-SCH-008 | Minutes out of range (not 0-1439) | `400 Bad Request` |
-| TC-CREATE-SCH-009 | Weekdays array contains duplicates or invalid integers | `400 Bad Request` |
+| TC-CREATE-SCH-009 | Weekdays array contains invalid integers | `400 Bad Request` |
+| TC-CREATE-SCH-009-DUP | Weekdays array contains duplicates | `400 Bad Request` |
 | TC-UPDATE-SCH-001 | Update unlinked/disabled schedule successfully | `200 OK`; updated metadata returned; `config-raw` is omitted |
 | TC-UPDATE-SCH-002 | Update active linked schedule successfully | `200 OK`; updated metadata returned; contains updated `config-raw` snapshot |
 | TC-UPDATE-SCH-003 | Update with name already used by another schedule | `409 Conflict` |

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/routerarchitects/mango-parental-control/internal/config"
+	"github.com/routerarchitects/mango-parental-control/internal/db"
 	"github.com/routerarchitects/mango-parental-control/internal/http/middleware"
 	"github.com/routerarchitects/mango-parental-control/internal/http/routes"
 	"github.com/routerarchitects/ow-common-mods/fiber/middleware/auth"
@@ -17,6 +18,7 @@ import (
 )
 
 type Dependencies struct {
+	DB                *db.Database
 	ServerLogger      *slog.Logger
 	ServerConfig      config.ServerConfig
 	SubsystemConfig   subsystemroutes.Config
@@ -61,12 +63,14 @@ func NewModule(deps Dependencies) (*Module, error) {
 
 	// Configure public routes
 	routes.RegisterPublic(publicApp, routes.PublicDeps{
+		DB:          deps.DB,
 		AuthHandler: authMiddleware.GetPublicAuthHandler(),
 		Subsystem:   deps.SubsystemConfig,
 	})
 
 	// Configure private routes
 	routes.RegisterPrivate(privateApp, routes.PrivateDeps{
+		DB:          deps.DB,
 		AuthHandler: authMiddleware.GetPrivateAuthHandler(),
 		Subsystem:   deps.SubsystemConfig,
 	})
