@@ -95,37 +95,37 @@ type ConfigRawCommand []string
 
 // ConfigRawResponse represents the config-raw envelope
 type ConfigRawResponse struct {
-	ConfigRaw []ConfigRawCommand `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
 }
 
 // GroupWriteResponse represents Group + ConfigRawResponse fields inline
 type GroupWriteResponse struct {
 	Group
-	ConfigRaw []ConfigRawCommand `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
 }
 
 // GroupDeviceWriteResponse represents GroupDevice + ConfigRawResponse fields inline
 type GroupDeviceWriteResponse struct {
 	GroupDevice
-	ConfigRaw []ConfigRawCommand `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
 }
 
 // ScheduleWriteResponse represents Schedule + ConfigRawResponse fields inline
 type ScheduleWriteResponse struct {
 	Schedule
-	ConfigRaw []ConfigRawCommand `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
 }
 
 // GroupScheduleWriteResponse represents GroupScheduleLink + ConfigRawResponse fields inline
 type GroupScheduleWriteResponse struct {
 	GroupScheduleLink
-	ConfigRaw []ConfigRawCommand `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
 }
 
 // GroupScheduleReplaceResponse represents links list + ConfigRawResponse fields inline
 type GroupScheduleReplaceResponse struct {
 	Links     []GroupScheduleLink `json:"links"`
-	ConfigRaw []ConfigRawCommand  `json:"config-raw,omitempty"`
+	ConfigRaw []ConfigRawCommand  `json:"config-raw"`
 }
 
 // ErrorResponse represents custom error payloads

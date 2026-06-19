@@ -9,21 +9,21 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("SERVICE_NAME", "mango-parental-control")
 	t.Setenv("SERVICE_TYPE", "mango-parental-control")
 	t.Setenv("SERVICE_VERSION", "dev")
-	t.Setenv("SYSTEM_URI_PRIVATE", "https://localhost:17010")
-	t.Setenv("SYSTEM_URI_PUBLIC", "https://localhost:16010")
+	t.Setenv("SYSTEM_URI_PRIVATE", "https://localhost:17008")
+	t.Setenv("SYSTEM_URI_PUBLIC", "https://localhost:16008")
 	t.Setenv("DISCOVERY_TOPIC", "service_events")
-
+ 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("expected no error loading configuration defaults, got: %v", err)
 	}
-
+ 
 	tests := []struct {
 		got, want any
 		name      string
 	}{
-		{cfg.Server.HTTPPort, 16010, "HTTPPort"},
-		{cfg.Server.PrivatePort, 17010, "PrivatePort"},
+		{cfg.Server.HTTPPort, 16008, "HTTPPort"},
+		{cfg.Server.PrivatePort, 17008, "PrivatePort"},
 		{cfg.Database.Port, 5432, "Database Port"},
 		{cfg.Database.StorageType, "postgresql", "StorageType"},
 		{cfg.Discovery.Enabled, true, "Discovery.Enabled"},

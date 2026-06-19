@@ -79,7 +79,7 @@ Once you have initialized the repository (Phase 1), run the following commands t
 1. **Customize the service name and ports**:
    Define your service settings as environment variables, then run the customization and rename commands:
    ```bash
-   # 1. Define your new service configurations (e.g. PUBLIC_PORT="16010", PRIVATE_PORT="17010"):
+   # 1. Define your new service configurations (e.g. PUBLIC_PORT="16008", PRIVATE_PORT="17008"):
    export NEW_SERVICE_NAME="<new-service-name>"
    export PUBLIC_PORT="<public-port>"
    export PRIVATE_PORT="<private-port>"

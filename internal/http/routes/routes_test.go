@@ -538,11 +538,18 @@ func TestSubscriberWorkflow(t *testing.T) {
 			RequestBody:    `{"name":"S-A_Schedule_night_weekday","description":"Weekday night internet block","enabled":false,"action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":1260,"stop_minute":540,"weekdays":[1,2,3,4,5]}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var responseData struct {
-					ConfigRaw [][]string `json:"config-raw"`
+				var rawMap map[string]any
+				if err := json.Unmarshal(body, &rawMap); err != nil {
+					t.Fatalf("failed to unmarshal JSON response body: %v", err)
 				}
-				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) != 0 {
-					t.Errorf("expected empty config-raw [], got: %v", responseData.ConfigRaw)
+				val, ok := rawMap["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				} else {
+					arr, ok := val.([]any)
+					if !ok || len(arr) != 0 {
+						t.Errorf("expected empty config-raw [], got: %v", val)
+					}
 				}
 			},
 		},

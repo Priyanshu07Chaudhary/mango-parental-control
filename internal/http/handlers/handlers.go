@@ -16,6 +16,7 @@ import (
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gopkg.in/yaml.v3"
 
 	"github.com/routerarchitects/mango-parental-control/internal/db"
@@ -561,22 +562,36 @@ func (h *ServiceHandler) CreateGroup(c fiber.Ctx) error {
 		return sendError(c, fiber.StatusConflict, "invalid_group", "Duplicate group name", nil)
 	}
 
-	// Insert group
+	// Insert group with retry on config_index unique violation
 	var nextIndex int
-	err = h.DB.Pool.QueryRow(c.Context(), "SELECT COALESCE(MAX(config_index), 0) + 1 FROM pc_groups WHERE subscriber_id = $1", subID).Scan(&nextIndex)
-	if err != nil {
+	gID := uuid.New().String()
+	now := time.Now().UTC()
+	inserted := false
+
+	for retry := 0; retry < 10; retry++ {
+		err = h.DB.Pool.QueryRow(c.Context(), "SELECT COALESCE(MAX(config_index), 0) + 1 FROM pc_groups WHERE subscriber_id = $1", subID).Scan(&nextIndex)
+		if err != nil {
+			return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+		}
+
+		_, err = h.DB.Pool.Exec(c.Context(), `
+			INSERT INTO pc_groups (id, subscriber_id, config_index, name, description, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`, gID, subID, nextIndex, req.Name, req.Description, now, now)
+		if err == nil {
+			inserted = true
+			break
+		}
+
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			continue
+		}
 		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
 	}
 
-	gID := uuid.New().String()
-	now := time.Now().UTC()
-
-	_, err = h.DB.Pool.Exec(c.Context(), `
-		INSERT INTO pc_groups (id, subscriber_id, config_index, name, description, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, gID, subID, nextIndex, req.Name, req.Description, now, now)
-	if err != nil {
-		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	if !inserted {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", "Failed to allocate unique config index for group", nil)
 	}
 
 	// Call config-raw
@@ -1024,13 +1039,8 @@ func (h *ServiceHandler) CreateSchedule(c fiber.Ctx) error {
 		return sendError(c, fiber.StatusConflict, "invalid_schedule", "Duplicate schedule name", nil)
 	}
 
-	// Insert
+	// Insert schedule with retry on config_index unique violation
 	var nextIndex int
-	err = h.DB.Pool.QueryRow(c.Context(), "SELECT COALESCE(MAX(config_index), 0) + 1 FROM pc_schedules WHERE subscriber_id = $1", subID).Scan(&nextIndex)
-	if err != nil {
-		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
-	}
-
 	sID := uuid.New().String()
 	enabledVal := true
 	if req.Enabled != nil {
@@ -1043,12 +1053,31 @@ func (h *ServiceHandler) CreateSchedule(c fiber.Ctx) error {
 		pgWeekdays[i] = int16(w)
 	}
 
-	_, err = h.DB.Pool.Exec(c.Context(), `
-		INSERT INTO pc_schedules (id, subscriber_id, config_index, name, description, enabled, action_type, target_kind, target_value, start_minute, stop_minute, weekdays, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-	`, sID, subID, nextIndex, req.Name, req.Description, enabledVal, req.ActionType, req.TargetKind, req.TargetValue, *req.StartMinute, *req.StopMinute, pgWeekdays, now, now)
-	if err != nil {
+	inserted := false
+	for retry := 0; retry < 10; retry++ {
+		err = h.DB.Pool.QueryRow(c.Context(), "SELECT COALESCE(MAX(config_index), 0) + 1 FROM pc_schedules WHERE subscriber_id = $1", subID).Scan(&nextIndex)
+		if err != nil {
+			return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+		}
+
+		_, err = h.DB.Pool.Exec(c.Context(), `
+			INSERT INTO pc_schedules (id, subscriber_id, config_index, name, description, enabled, action_type, target_kind, target_value, start_minute, stop_minute, weekdays, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+		`, sID, subID, nextIndex, req.Name, req.Description, enabledVal, req.ActionType, req.TargetKind, req.TargetValue, *req.StartMinute, *req.StopMinute, pgWeekdays, now, now)
+		if err == nil {
+			inserted = true
+			break
+		}
+
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			continue
+		}
 		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	if !inserted {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", "Failed to allocate unique config index for schedule", nil)
 	}
 
 	cfgRaw, _, err := handleConfigRaw(c.Context(), h.DB, subID)

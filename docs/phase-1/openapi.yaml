@@ -380,7 +380,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/GroupScheduleLink'
+                  $ref: '#/components/schemas/Schedule'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -706,7 +706,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/ScheduleCreateFields'
         - type: object
-          required: [name, action_type, target_kind, target_value, start_minute, stop_minute, weekdays]
+          required: [name, action_type, target_kind, start_minute, stop_minute, weekdays]
           properties:
             target_kind:
               type: string
@@ -736,7 +736,6 @@ components:
     SchedulePutFields:
       type: object
       description: Full replacement request for mutable schedule fields. `PUT` requests must send the complete mutable schedule representation.
-      required: [name, description, enabled, action_type, target_kind, target_value, start_minute, stop_minute, weekdays]
       properties:
         name:
           type: string
@@ -775,6 +774,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/SchedulePutFields'
         - type: object
+          required: [name, description, enabled, action_type, target_kind, start_minute, stop_minute, weekdays]
           properties:
             target_kind:
               type: string
@@ -787,6 +787,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/SchedulePutFields'
         - type: object
+          required: [name, description, enabled, action_type, target_kind, target_value, start_minute, stop_minute, weekdays]
           properties:
             target_kind:
               type: string
