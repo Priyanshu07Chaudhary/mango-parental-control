@@ -66,7 +66,10 @@ jobs:
       - name: Run Go Vet
         run: go vet ./...
 
-      - name: Run Unit Tests
+      - name: Validate OpenAPI Specification
+        run: npx -y @redocly/cli lint docs/phase-1/openapi.yaml
+
+      - name: Run Unit and Integration Tests
         run: |
           # Mock the required environment variables enforced by the discovery and logger libraries
           export SERVICE_NAME="mango-parental-control"
