@@ -6,10 +6,18 @@ on:
   pull_request:
     branches: [ main, master ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
     name: Build and Test
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     services:
       postgres:
         image: postgres:16
@@ -40,6 +48,11 @@ jobs:
           go mod download
           go mod verify
 
+      - name: Verify Module Consistency
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: Check Code Formatting
         run: |
           unformatted=$(find . -name "*.go" -not -path "*/vendor/*" -not -path "*/tmp_test/*" -print0 | xargs -0 -r gofmt -l)
@@ -49,6 +62,9 @@ jobs:
             echo "Please run 'gofmt -w .' on your local files."
             exit 1
           fi
+
+      - name: Run Go Vet
+        run: go vet ./...
 
       - name: Run Unit Tests
         run: |
