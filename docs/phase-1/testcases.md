@@ -27,7 +27,7 @@ The following error conditions apply universally across all endpoints (unless sp
 
 ---
 
-## 1. System Diagnostics & Health APIs
+## 1. Service Health API
 
 ### Liveness Probe (`GET /livez`)
 Security: Unauthenticated (accessible on both public and private ports).
@@ -38,27 +38,6 @@ Security: Unauthenticated (accessible on both public and private ports).
 | TC-LIVEZ-002 | Health check returns unhealthy | `500 Internal Server Error` |
 | TC-LIVEZ-003 | Access health check unauthenticated | `200 OK`; request succeeds without authentication |
 
-### Retrieve System Diagnostics (`GET /api/v1/system`)
-Security: Requires private admin authentication headers.
-
-| ID | Name | Expected Result |
-|---|---|---|
-| TC-SYS-GET-001 | Missing authentication headers | `401 Unauthorized` |
-| TC-SYS-GET-002 | Retrieve static system info successfully (`command=info`) | `200 OK`; returns system version, build information, and environment |
-| TC-SYS-GET-003 | Retrieve resource statistics successfully (`command=resources`) | `200 OK`; returns active CPU/Memory usage metrics |
-| TC-SYS-GET-004 | Missing or invalid `command` query parameter | `400 Bad Request` |
-
-### Modify Log Levels (`POST /api/v1/system`)
-Security: Requires private admin authentication headers.
-
-| ID | Name | Expected Result |
-|---|---|---|
-| TC-SYS-POST-001 | Set log level successfully for a subsystem | `200 OK`; log level updated at runtime |
-| TC-SYS-POST-002 | Get current active log levels | `200 OK`; returns active log levels mapping |
-| TC-SYS-POST-003 | Get allowed log level names & subsystems | `200 OK`; returns valid level and subsystem tags |
-| TC-SYS-POST-004 | Missing required field `command` or empty `subsystems` list | `400 Bad Request` |
-
----
 
 ## 2. Subscriber Groups APIs
 Endpoints:

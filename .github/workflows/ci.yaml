@@ -37,7 +37,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: Set up Go Environment
         uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run Go Vet
+      - name: Run Static Analysis (go vet)
         run: go vet ./...
 
       - name: Validate OpenAPI Specification
@@ -88,6 +88,6 @@ jobs:
           
           go test -v -race ./...
 
-      - name: Compile Binary
+      - name: Build Service Binary
         run: |
           make build
