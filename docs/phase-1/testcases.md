@@ -1,6 +1,6 @@
 # Mango Parental Control Service - Phase 1 API Test Cases
 
-Scope: Phase 1 Parental Control Service APIs defined in `docs/phase-1/openapi.yaml`
+Scope: Phase 1 Parental Control Service APIs defined in `docs/openapi.yaml`
 
 This document defines the verification matrices and approved test case tables for the Phase 1 Parental Control Service API contract.
 
