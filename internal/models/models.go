@@ -87,7 +87,7 @@ type GroupScheduleLinkRequest struct {
 
 // GroupScheduleReplaceRequest payload for PUT /api/v1/subscribers/{subscriber_id}/groups/{group_id}/schedules
 type GroupScheduleReplaceRequest struct {
-	ScheduleIDs []string `json:"schedule_ids"`
+	ScheduleIDs *[]string `json:"schedule_ids"`
 }
 
 // ConfigRawCommand is a 2- or 3-element array of strings
