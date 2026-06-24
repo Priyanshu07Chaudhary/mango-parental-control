@@ -16,9 +16,13 @@ A standardized, production-ready microservice foundation skeleton for the Mango 
 │   └── schema/                  # SQL schema migrations directory
 │       └── 0001_initial.sql     # Placeholder SQL table setup
 ├── docs/                        # Specifications and API contracts templates
-│   ├── requirements.md          # Requirements template
-│   ├── design.md                # Technical design doc template
-│   └── openapi.yaml             # OpenAPI (Swagger) api definition
+│   ├── phase-1/                 # Phase 1 documentation deliverables
+│   │   ├── design.md            # Technical design doc template
+│   │   ├── config-raw.md        # Config generation rules
+│   │   ├── testcases.md         # API test cases and validation matrices
+│   │   └── examples/            # End-to-end examples and generated config samples
+│   ├── openapi.yaml             # OpenAPI (Swagger) api definition
+│   └── requirements.md          # Requirements template
 ├── configs/                     # Configurations for development/testing
 │   └── local-dev.env            # Env configuration for local running (outside Docker)
 ├── deployments/                 # Deployment-related configurations

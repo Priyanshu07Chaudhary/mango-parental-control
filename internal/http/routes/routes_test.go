@@ -463,6 +463,99 @@ func TestParentalControlAPI(t *testing.T) {
 			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules/{schID1}",
 			ExpectedStatus: http.StatusNotFound,
 		},
+		{
+			ID:             "TC-REPLACE-SCH-MISSING-IDS",
+			Desc:           "Replace schedules - missing schedule_ids",
+			Method:         http.MethodPut,
+			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules",
+			RequestBody:    `{"different_key":["some-uuid"]}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-CREATE-GROUP-UNKNOWN-FIELD",
+			Desc:           "Create group - unknown field rejection",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups",
+			RequestBody:    `{"name":"Invalid Group","extra_field":"some-value"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-ADD-DEVICE-UNKNOWN-FIELD",
+			Desc:           "Add device - unknown field rejection",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/devices",
+			RequestBody:    `{"client_mac":"00:11:22:33:44:55","unknown_field":true}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-REPLACE-SCH-UNKNOWN-FIELD",
+			Desc:           "Replace schedules - unknown field rejection",
+			Method:         http.MethodPut,
+			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules",
+			RequestBody:    `{"schedule_ids":[],"unknown_field":true}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-CREATE-SCH-UNKNOWN-FIELD",
+			Desc:           "Create schedule - unknown field rejection",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"Invalid Schedule","action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":1260,"stop_minute":360,"weekdays":[0],"unknown_field":123}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-UPDATE-GROUP-UNKNOWN-FIELD",
+			Desc:           "Update group - unknown field rejection",
+			Method:         http.MethodPut,
+			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}",
+			RequestBody:    `{"name":"Kids Home Group Updated","unknown_field":true}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-LINK-SCH-UNKNOWN-FIELD",
+			Desc:           "Link schedule - unknown field rejection",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules",
+			RequestBody:    `{"schedule_id":"{schID1}","unknown_field":true}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-UPDATE-SCH-UNKNOWN-FIELD",
+			Desc:           "Update schedule - unknown field rejection",
+			Method:         http.MethodPut,
+			URL:            "/api/v1/subscribers/{subID}/schedules/{schID1}",
+			RequestBody:    `{"name":"Sleep Time Rules","enabled":false,"action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":1260,"stop_minute":360,"weekdays":[0],"unknown_field":123}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-CREATE-SCH-INTERNET-OMITTED",
+			Desc:           "Create INTERNET schedule with target_value omitted entirely",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"Internet Omitted TargetValue","action_type":"BLOCK","target_kind":"INTERNET","start_minute":1260,"stop_minute":360,"weekdays":[0,1,2,3,4,5,6]}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-SCH-NOOP-RESPONSE-SHAPE",
+			Desc:           "Response-shape test: config-raw is present as null for no-op write",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"No-Op Shape Test","action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":100,"stop_minute":200,"weekdays":[0]}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var rawMap map[string]any
+				if err := json.Unmarshal(body, &rawMap); err != nil {
+					t.Fatalf("failed to unmarshal JSON: %v", err)
+				}
+				val, ok := rawMap["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				}
+				if val != nil {
+					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				}
+			},
+		},
 	}
 
 	runTestSuite(t, app, vars, testCases)

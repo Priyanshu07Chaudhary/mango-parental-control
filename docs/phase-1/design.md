@@ -19,7 +19,7 @@ Detailed API contract, config generation rules, and examples are documented sepa
 
 | Document | Purpose |
 |---|---|
-| `openapi.yaml` | OpenAPI-style API definition |
+| `docs/openapi.yaml` | OpenAPI-style API definition |
 | `config-raw.md` | Config generation rules |
 | `examples/` | Example workflows and config payloads |
 

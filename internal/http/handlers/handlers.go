@@ -1451,6 +1451,10 @@ func (h *ServiceHandler) ReplaceSchedules(c fiber.Ctx) error {
 		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Malformed JSON body", nil)
 	}
 
+	if req.ScheduleIDs == nil {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Missing required field 'schedule_ids'", nil)
+	}
+
 	// Validate extra fields
 	if err := validateExtraFields(c.Body(), []string{"schedule_ids"}); err != nil {
 		return sendError(c, fiber.StatusBadRequest, "invalid_request", err.Error(), nil)
@@ -1468,7 +1472,7 @@ func (h *ServiceHandler) ReplaceSchedules(c fiber.Ctx) error {
 
 	// Verify all schedule IDs are distinct
 	idMap := make(map[string]bool)
-	for _, id := range req.ScheduleIDs {
+	for _, id := range *req.ScheduleIDs {
 		if !validateUUID(id) {
 			return sendError(c, fiber.StatusBadRequest, "invalid_request", "Invalid schedule UUID format", nil)
 		}
@@ -1479,7 +1483,7 @@ func (h *ServiceHandler) ReplaceSchedules(c fiber.Ctx) error {
 	}
 
 	// Verify all schedules exist and belong to the same subscriber
-	for _, id := range req.ScheduleIDs {
+	for _, id := range *req.ScheduleIDs {
 		var sExists bool
 		err = h.DB.Pool.QueryRow(c.Context(), "SELECT EXISTS(SELECT 1 FROM pc_schedules WHERE subscriber_id = $1 AND id = $2)", subID, id).Scan(&sExists)
 		if err != nil {
@@ -1504,7 +1508,7 @@ func (h *ServiceHandler) ReplaceSchedules(c fiber.Ctx) error {
 
 	now := time.Now().UTC()
 	var links []models.GroupScheduleLink
-	for _, id := range req.ScheduleIDs {
+	for _, id := range *req.ScheduleIDs {
 		_, err = tx.Exec(c.Context(), `
 			INSERT INTO pc_group_schedules (subscriber_id, group_id, schedule_id, created_at)
 			VALUES ($1, $2, $3, $4)
