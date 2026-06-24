@@ -527,6 +527,35 @@ func TestParentalControlAPI(t *testing.T) {
 			RequestBody:    `{"name":"Sleep Time Rules","enabled":false,"action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":1260,"stop_minute":360,"weekdays":[0],"unknown_field":123}`,
 			ExpectedStatus: http.StatusBadRequest,
 		},
+		{
+			ID:             "TC-CREATE-SCH-INTERNET-OMITTED",
+			Desc:           "Create INTERNET schedule with target_value omitted entirely",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"Internet Omitted TargetValue","action_type":"BLOCK","target_kind":"INTERNET","start_minute":1260,"stop_minute":360,"weekdays":[0,1,2,3,4,5,6]}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-SCH-NOOP-RESPONSE-SHAPE",
+			Desc:           "Response-shape test: config-raw is present as null for no-op write",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/schedules",
+			RequestBody:    `{"name":"No-Op Shape Test","action_type":"BLOCK","target_kind":"INTERNET","target_value":null,"start_minute":100,"stop_minute":200,"weekdays":[0]}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var rawMap map[string]any
+				if err := json.Unmarshal(body, &rawMap); err != nil {
+					t.Fatalf("failed to unmarshal JSON: %v", err)
+				}
+				val, ok := rawMap["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				}
+				if val != nil {
+					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				}
+			},
+		},
 	}
 
 	runTestSuite(t, app, vars, testCases)
