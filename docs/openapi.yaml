@@ -467,6 +467,73 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/StorageFailure' }
+
+  /api/v1/subscribers/{subscriber_id}/client-access:
+    post:
+      summary: Pause client internet access
+      description: >-
+        Create or replace subscriber-scoped client pause-state for the target
+        MAC address using a caller-provided gateway-local request shape for a
+        single intended block day. For this API, `start_date` must be the
+        intended block date, `stop_date` must be exactly the next calendar
+        date, and `start_time` and `stop_time` must describe the active
+        interval on the intended block date, with `stop_time` greater than
+        `start_time`. The next-day `stop_date` is required by the supported
+        firewall request shape and does not represent a subscriber-facing
+        multi-day block. The caller must send dates and times already
+        normalized to the gateway/router local timezone. The response always
+        contains the `config-raw` field, which will contain the updated
+        commands if the effective parental-control snapshot changes, or `null`
+        for no-op changes. This API is intended primarily for Userportal /
+        `owsub` orchestration and follows the same public/private interface
+        exposure model as the existing parental-control APIs.
+      parameters:
+        - $ref: '#/components/parameters/SubscriberIdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientAccessCreateRequest'
+      responses:
+        '200':
+          description: Client pause-state created or replaced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClientAccessWriteResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/StorageFailure' }
+
+  /api/v1/subscribers/{subscriber_id}/client-access/{client_mac}:
+    delete:
+      summary: Unpause client internet access
+      description: >-
+        Remove subscriber-scoped client pause-state for the target MAC address.
+        The response always contains the `config-raw` field. If removing the
+        pause-state changes the remaining effective parental-control snapshot,
+        `config-raw` contains the updated commands. If no
+        parental-control-owned snapshot remains after the delete, `config-raw`
+        is returned as an empty array `[]`. If the pause-state is already
+        absent, the operation succeeds and `config-raw` is returned as `null`.
+        This API is intended primarily for Userportal / `owsub` orchestration
+        and follows the same public/private interface exposure model as the
+        existing parental-control APIs.
+      parameters:
+        - $ref: '#/components/parameters/SubscriberIdPath'
+        - $ref: '#/components/parameters/ClientMacPath'
+      responses:
+        '200':
+          description: Client pause-state removed or already absent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigRawResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/StorageFailure' }
+
 components:
   securitySchemes:
     PublicTokenAuth:
@@ -880,6 +947,7 @@ components:
         type: string
     ConfigRawResponse:
       type: object
+      required: [config-raw]
       description: Successful write response extension. Write operations return `200 OK`. The `config-raw` property is always present in the response (either as `null` for no-op changes, an empty array `[]` when policy is cleared, or a populated array containing the full parental-control-owned snapshot). Command tuple shape follows the upstream schema reference at `https://github.com/Telecominfraproject/wlan-ucentral-schema/blob/main/schema/config-raw.yml`.
       properties:
         config-raw:
@@ -934,3 +1002,75 @@ components:
             details:
               type: object
               additionalProperties: true
+    ClientAccessState:
+      type: object
+      required: [subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at]
+      properties:
+        subscriber_id:
+          type: string
+          format: uuid
+        client_mac:
+          type: string
+          pattern: '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+        start_date:
+          type: string
+          format: date
+          description: Effective enforcement start date for the client-access rule.
+        stop_date:
+          type: string
+          format: date
+          description: Effective enforcement stop date for the client-access rule.
+        start_time:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
+          description: Effective enforcement start time for the client-access rule.
+        stop_time:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
+          description: Effective enforcement stop time for the client-access rule.
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ClientAccessCreateRequest:
+      type: object
+      additionalProperties: false
+      description: >-
+        Create request. The caller must send dates and times already normalized
+        to the gateway/router local timezone. This service does not resolve or
+        convert timezone context for this API. Supported shape for this API is
+        a request for a single intended block day: `start_date` is the
+        intended block date, `stop_date` is the next calendar date, and
+        `start_time` and `stop_time` describe the active interval on the
+        intended block date, with `stop_time` greater than `start_time`. The
+        next-day `stop_date` is part of the supported firewall request shape
+        and does not represent a subscriber-facing multi-day block.
+      required: [client_mac, start_date, stop_date, start_time, stop_time]
+      properties:
+        client_mac:
+          type: string
+          pattern: '^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+        start_date:
+          type: string
+          format: date
+          description: Gateway-local intended block date for the supported single-day quick-block window.
+        stop_date:
+          type: string
+          format: date
+          description: Gateway-local next calendar date after `start_date`, required by the supported firewall request shape for the intended block day.
+        start_time:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
+          description: Gateway-local block start time on the intended block date.
+        stop_time:
+          type: string
+          pattern: '^([0-1][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$'
+          description: Gateway-local block stop time on the intended block date. Must be greater than `start_time`.
+    ClientAccessWriteResponse:
+      description: Client-access write response. Always includes `config-raw` through `ConfigRawResponse` (which is `null` for no-op changes, `[]` when policy is cleared, or the populated array of commands).
+      allOf:
+        - $ref: '#/components/schemas/ConfigRawResponse'
+        - $ref: '#/components/schemas/ClientAccessState'
