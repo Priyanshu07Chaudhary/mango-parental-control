@@ -25,14 +25,14 @@ type App struct {
 	httpMod   *apphttp.Module
 }
 
-// New initializes all dependencies and builds the App.
+// New sets up components and constructs a wired application instance.
 func New(ctx context.Context, cfg *config.Config, rootLog *slog.Logger) (*App, error) {
 	// Validate authentication configuration dependencies
 	if cfg.Auth.Enabled && (!cfg.Discovery.Enabled || !cfg.RPC.Enabled) {
 		return nil, fmt.Errorf("invalid configuration: public authentication (AUTH_ENABLED) requires both service discovery (DISCOVERY_ENABLED) and service RPC (SERVICE_RPC_ENABLED) to be enabled")
 	}
 
-	// 1. Establish database connection pool
+	// 1. Establish Database Connection (conditional migration run)
 	database, err := db.Connect(ctx, cfg.Database, logger.Subsystem("db"))
 	if err != nil {
 		return nil, fmt.Errorf("database connection failure: %w", err)
@@ -87,14 +87,20 @@ func New(ctx context.Context, cfg *config.Config, rootLog *slog.Logger) (*App, e
 		rootLog.Info("service RPC client factory and token validation are disabled via configuration")
 	}
 
-	// 5. Assemble Fiber HTTP apps module
+	// 5. Retrieve expected internal API key
+	expectedKey, err := getExpectedAPIKey(discovery, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine internal API key: %w", err)
+	}
+
+	// 6. Assemble Fiber HTTP apps module
 	module, err := apphttp.NewModule(apphttp.Dependencies{
 		DB:                database,
 		ServerLogger:      logger.Subsystem("server"),
 		ServerConfig:      cfg.Server,
 		SubsystemConfig:   cfg.Subsystem,
 		PublicAuthConfig:  auth.PublicAuthConfig{},
-		PrivateAuthConfig: auth.InternalAPIKeyConfig{ExpectedAPIKey: cfg.Discovery.InstanceKey},
+		PrivateAuthConfig: auth.InternalAPIKeyConfig{ExpectedAPIKey: expectedKey},
 		TokenValidator:    tokenValidator,
 		AuthEnabled:       cfg.Auth.Enabled,
 	})
@@ -157,4 +163,22 @@ func (a *App) Close(ctx context.Context) error {
 	}
 
 	return firstErr
+}
+
+func resolveAPIKey(discoveryKey string, cfgInstanceKey string) (string, error) {
+	if discoveryKey != "" {
+		return discoveryKey, nil
+	}
+	if cfgInstanceKey != "" {
+		return cfgInstanceKey, nil
+	}
+	return "", fmt.Errorf("internal API key not configured (SYSTEM_INSTANCE_KEY is empty and discovery is disabled)")
+}
+
+func getExpectedAPIKey(discovery *servicediscovery.Discovery, cfg *config.Config) (string, error) {
+	var discoveryKey string
+	if discovery != nil {
+		discoveryKey = discovery.Self().Key
+	}
+	return resolveAPIKey(discoveryKey, cfg.Discovery.InstanceKey)
 }

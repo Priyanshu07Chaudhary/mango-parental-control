@@ -3,15 +3,40 @@ package routes_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/routerarchitects/mango-parental-control/internal/http/middleware"
 	"github.com/routerarchitects/mango-parental-control/internal/http/routes"
+	"github.com/routerarchitects/ow-common-mods/fiber/middleware/auth"
 	subsysteroutes "github.com/routerarchitects/ow-common-mods/fiber/system-routes"
 )
+
+type mockPublicValidator struct {
+	expectedToken  string
+	expectedAPIKey string
+}
+
+func (m *mockPublicValidator) ValidateToken(ctx context.Context, token string) error {
+	if token == m.expectedToken {
+		return nil
+	}
+	return fmt.Errorf("invalid token")
+}
+
+func (m *mockPublicValidator) ValidateAPIKey(ctx context.Context, apiKey string) error {
+	if apiKey == m.expectedAPIKey {
+		return nil
+	}
+	return fmt.Errorf("invalid api key")
+}
 
 func TestParentalControlAPI(t *testing.T) {
 	dbConn := initTestDB(t)
@@ -41,6 +66,7 @@ func TestParentalControlAPI(t *testing.T) {
 
 	privateApp := fiber.New()
 	routes.RegisterPrivate(privateApp, routes.Deps{
+		DB:          dbConn,
 		AuthHandler: mockAuthPrivate,
 		Subsystem:   subsysteroutes.Config{},
 	})
@@ -96,18 +122,18 @@ func TestParentalControlAPI(t *testing.T) {
 		},
 		{
 			ID:             "TC-SYS-PUBLIC-GET-001",
-			Desc:           "System diagnostics GET on public app is not found",
+			Desc:           "System diagnostics GET on public app is successful",
 			Method:         http.MethodGet,
 			URL:            "/api/v1/system?command=info",
-			ExpectedStatus: http.StatusNotFound,
+			ExpectedStatus: http.StatusOK,
 		},
 		{
 			ID:             "TC-SYS-PUBLIC-POST-001",
-			Desc:           "System diagnostics POST on public app is not found",
+			Desc:           "System diagnostics POST on public app is successful",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/system",
 			RequestBody:    `{"command":"setloglevel","subsystems":[{"tag":"http","value":"debug"}]}`,
-			ExpectedStatus: http.StatusNotFound,
+			ExpectedStatus: http.StatusOK,
 		},
 		{
 			ID:             "TC-CREATE-GROUP-001",
@@ -164,6 +190,30 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusOK,
 		},
 		{
+			ID:     "TC-GET-GROUP-PRIVATE-001",
+			Desc:   "Get group details successfully on private router with auth",
+			Method: http.MethodGet,
+			URL:    "/api/v1/subscribers/{subID}/groups/{groupID1}",
+			Headers: map[string]string{
+				"X-API-KEY":       "{apiKey}",
+				"X-INTERNAL-NAME": "{internalName}",
+			},
+			ExpectedStatus: http.StatusOK,
+			App:            privateApp,
+		},
+		{
+			ID:     "TC-GET-GROUP-PRIVATE-002",
+			Desc:   "Get group details on private router fails with missing/invalid auth",
+			Method: http.MethodGet,
+			URL:    "/api/v1/subscribers/{subID}/groups/{groupID1}",
+			Headers: map[string]string{
+				"X-API-KEY":       "invalid-key",
+				"X-INTERNAL-NAME": "{internalName}",
+			},
+			ExpectedStatus: http.StatusUnauthorized,
+			App:            privateApp,
+		},
+		{
 			ID:             "TC-UPDATE-GROUP-001",
 			Desc:           "Update group name successfully",
 			Method:         http.MethodPut,
@@ -202,6 +252,45 @@ func TestParentalControlAPI(t *testing.T) {
 			URL:            "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules",
 			RequestBody:    `{"schedule_id":"{schID1}"}`,
 			ExpectedStatus: http.StatusOK,
+		},
+		// ── Private router smoke checks: one endpoint per API family ────────────
+		// These verify that all routes registered via the shared registerAPIRoutes()
+		// helper are reachable on the private router, not just the groups family.
+		{
+			ID:     "TC-PRIVATE-SMOKE-DEVICES-001",
+			Desc:   "Devices API is reachable on private router with valid internal auth",
+			Method: http.MethodGet,
+			URL:    "/api/v1/subscribers/{subID}/groups/{groupID1}/devices",
+			Headers: map[string]string{
+				"X-API-KEY":       "{apiKey}",
+				"X-INTERNAL-NAME": "{internalName}",
+			},
+			ExpectedStatus: http.StatusOK,
+			App:            privateApp,
+		},
+		{
+			ID:     "TC-PRIVATE-SMOKE-SCHEDULES-001",
+			Desc:   "Schedules API is reachable on private router with valid internal auth",
+			Method: http.MethodGet,
+			URL:    "/api/v1/subscribers/{subID}/schedules",
+			Headers: map[string]string{
+				"X-API-KEY":       "{apiKey}",
+				"X-INTERNAL-NAME": "{internalName}",
+			},
+			ExpectedStatus: http.StatusOK,
+			App:            privateApp,
+		},
+		{
+			ID:     "TC-PRIVATE-SMOKE-GROUP-SCHEDULES-001",
+			Desc:   "Group-schedules API is reachable on private router with valid internal auth",
+			Method: http.MethodGet,
+			URL:    "/api/v1/subscribers/{subID}/groups/{groupID1}/schedules",
+			Headers: map[string]string{
+				"X-API-KEY":       "{apiKey}",
+				"X-INTERNAL-NAME": "{internalName}",
+			},
+			ExpectedStatus: http.StatusOK,
+			App:            privateApp,
 		},
 		{
 			ID:             "TC-ADD-DEVICE-002",
@@ -694,4 +783,64 @@ func TestSubscriberWorkflow(t *testing.T) {
 	}
 
 	runTestSuite(t, app, vars, testCases)
+}
+
+func TestPublicSystemRoutesAuth(t *testing.T) {
+	app := fiber.New()
+	mockVal := &mockPublicValidator{
+		expectedToken:  "expected-token",
+		expectedAPIKey: "expected-key",
+	}
+	publicCfg := auth.PublicAuthConfig{
+		Validator: mockVal,
+	}
+	privateCfg := auth.InternalAPIKeyConfig{
+		ExpectedAPIKey: "expected-key",
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	serviceAuth, err := middleware.NewServiceAuth(logger, true, publicCfg, privateCfg, mockVal)
+	if err != nil {
+		t.Fatalf("failed to initialize service auth: %v", err)
+	}
+
+	routes.RegisterPublic(app, routes.Deps{
+		DB:          nil,
+		AuthHandler: serviceAuth.PublicAuth,
+		Subsystem:   subsysteroutes.Config{},
+	})
+
+	t.Run("unauthorized access with no credentials -> expect 401 Unauthorized", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/system?command=info", nil)
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Test request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("Expected 401 Unauthorized, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("authorized bearer token is allowed for public system routes", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/system?command=info", nil)
+		req.Header.Set("Authorization", "Bearer expected-token")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Test request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
+		}
+	})
+
+	t.Run("authorized API key is allowed for public system routes", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/system?command=info", nil)
+		req.Header.Set("X-API-KEY", "expected-key")
+		resp, err := app.Test(req)
+		if err != nil {
+			t.Fatalf("Test request failed: %v", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 OK, got %d", resp.StatusCode)
+		}
+	})
 }

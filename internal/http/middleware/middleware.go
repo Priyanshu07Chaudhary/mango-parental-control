@@ -1,13 +1,13 @@
 package middleware
 
 import (
+	"fmt"
 	"log/slog"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/routerarchitects/ow-common-mods/fiber/middleware/auth"
 	"github.com/routerarchitects/ow-common-mods/fiber/middleware/requestlog"
-	"github.com/routerarchitects/ow-common-mods/servicerpc/owsec"
 )
 
 // RegisterPublicCORS configures CORS policies on the public Fiber application.
@@ -32,10 +32,11 @@ type ServiceAuth struct {
 
 // NewServiceAuth creates and configures public and private auth handlers.
 func NewServiceAuth(
+	logger *slog.Logger,
 	authEnabled bool,
 	publicCfg auth.PublicAuthConfig,
 	privateCfg auth.InternalAPIKeyConfig,
-	validator *owsec.SecurityClient,
+	validator auth.PublicAuthValidator,
 ) (*ServiceAuth, error) {
 	// Configure public auth handler (bypassed if AUTH_ENABLED=false)
 	var publicAuth fiber.Handler
@@ -47,10 +48,16 @@ func NewServiceAuth(
 		if publicCfg.Validator == nil {
 			publicCfg.Validator = validator
 		}
-		var err error
-		publicAuth, err = auth.RequirePublicAuth(publicCfg)
-		if err != nil {
-			return nil, err
+		if publicCfg.Validator == nil {
+			return nil, fmt.Errorf("public authentication is enabled but no token validator is available")
+		} else {
+			publicCfg = withValidationLogging(logger, "Public auth validation rejected", publicCfg)
+
+			rawPublicAuth, err := auth.RequirePublicAuth(publicCfg)
+			if err != nil {
+				return nil, err
+			}
+			publicAuth = withAuthLogging(logger, rawPublicAuth)
 		}
 	}
 
@@ -64,4 +71,33 @@ func NewServiceAuth(
 		PublicAuth:  publicAuth,
 		PrivateAuth: privateAuth,
 	}, nil
+}
+
+func withValidationLogging(logger *slog.Logger, msg string, cfg auth.PublicAuthConfig) auth.PublicAuthConfig {
+	originalOnValidationError := cfg.OnValidationError
+	cfg.OnValidationError = func(c fiber.Ctx, err error) error {
+		logger.Warn(msg, "err", err, "path", c.Path(), "method", c.Method())
+		if originalOnValidationError != nil {
+			return originalOnValidationError(c, err)
+		}
+		return c.SendStatus(fiber.StatusUnauthorized)
+	}
+	return cfg
+}
+
+func withAuthLogging(logger *slog.Logger, handler fiber.Handler) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		logger.Debug("Authenticating request", "path", c.Path(), "method", c.Method())
+		err := handler(c)
+		if err != nil {
+			logger.Warn("Authentication rejected", "path", c.Path(), "method", c.Method(), "err", err)
+			return err
+		}
+		if c.Response().StatusCode() == fiber.StatusUnauthorized {
+			logger.Warn("Authentication rejected: no credentials or invalid validation", "path", c.Path(), "method", c.Method())
+			return nil
+		}
+		logger.Debug("Authentication succeeded", "path", c.Path(), "method", c.Method())
+		return nil
+	}
 }

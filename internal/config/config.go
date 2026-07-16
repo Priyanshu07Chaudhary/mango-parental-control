@@ -9,20 +9,26 @@ import (
 )
 
 type ServerConfig struct {
-	HTTPPort    int    `env:"HTTP_PORT" envDefault:"16008"`
-	PrivatePort int    `env:"PRIVATE_HTTP_PORT" envDefault:"17008"`
-	TLS_CERT    string `env:"INTERNAL_RESTAPI_HOST_CERT"`
-	TLS_KEY     string `env:"INTERNAL_RESTAPI_HOST_KEY"`
-	TLS_ROOTCA  string `env:"INTERNAL_RESTAPI_HOST_ROOTCA"`
+	HTTPPort         int    `env:"HTTP_PORT" envDefault:"16008"`
+	PrivatePort      int    `env:"PRIVATE_HTTP_PORT" envDefault:"17008"`
+	PublicTLS_CERT   string `env:"RESTAPI_HOST_CERT"`
+	PublicTLS_KEY    string `env:"RESTAPI_HOST_KEY"`
+	PublicTLS_ROOTCA string `env:"RESTAPI_HOST_ROOTCA"`
+	TLS_CERT         string `env:"INTERNAL_RESTAPI_HOST_CERT"`
+	TLS_KEY          string `env:"INTERNAL_RESTAPI_HOST_KEY"`
+	TLS_ROOTCA       string `env:"INTERNAL_RESTAPI_HOST_ROOTCA"`
 }
 
+// PostgresConfig defines settings for PostgreSQL storage.
+// Defaults for Username and Password are set to standard superuser values for local development fallback,
+// while Database defaults to the dedicated 'mango-parental-control' database.
 type PostgresConfig struct {
 	StorageType string `env:"STORAGE_TYPE" envDefault:"postgresql"`
 	Host        string `env:"STORAGE_TYPE_POSTGRESQL_HOST" envDefault:"localhost"`
 	Port        int    `env:"STORAGE_TYPE_POSTGRESQL_PORT" envDefault:"5432"`
 	Username    string `env:"STORAGE_TYPE_POSTGRESQL_USERNAME" envDefault:"postgres"`
 	Password    string `env:"STORAGE_TYPE_POSTGRESQL_PASSWORD" envDefault:"postgres"`
-	Database    string `env:"STORAGE_TYPE_POSTGRESQL_DATABASE" envDefault:"postgres"`
+	Database    string `env:"STORAGE_TYPE_POSTGRESQL_DATABASE" envDefault:"mango-parental-control"`
 	SSLMode     string `env:"STORAGE_TYPE_POSTGRESQL_SSLMODE" envDefault:"disable"`
 }
 

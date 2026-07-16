@@ -13,7 +13,6 @@ import (
 	"github.com/routerarchitects/mango-parental-control/internal/http/routes"
 	"github.com/routerarchitects/ow-common-mods/fiber/middleware/auth"
 	subsystemroutes "github.com/routerarchitects/ow-common-mods/fiber/system-routes"
-	"github.com/routerarchitects/ow-common-mods/servicerpc/owsec"
 )
 
 type Dependencies struct {
@@ -23,7 +22,7 @@ type Dependencies struct {
 	SubsystemConfig   subsystemroutes.Config
 	PublicAuthConfig  auth.PublicAuthConfig
 	PrivateAuthConfig auth.InternalAPIKeyConfig
-	TokenValidator    *owsec.SecurityClient
+	TokenValidator    auth.PublicAuthValidator
 	AuthEnabled       bool
 }
 
@@ -36,6 +35,7 @@ type Module struct {
 // NewModule initializes the HTTP apps, CORS, loggers, auth middlewares, and routes.
 func NewModule(deps Dependencies) (*Module, error) {
 	authMiddleware, err := middleware.NewServiceAuth(
+		deps.ServerLogger,
 		deps.AuthEnabled,
 		deps.PublicAuthConfig,
 		deps.PrivateAuthConfig,
