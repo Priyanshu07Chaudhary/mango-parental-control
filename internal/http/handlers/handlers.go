@@ -1661,40 +1661,18 @@ func (h *ServiceHandler) GetGroupScheduleLink(c fiber.Ctx) error {
 
 func (h *ServiceHandler) cleanupExpiredClientAccess(ctx context.Context, subscriberID string) error {
 	now := time.Now()
-	rows, err := h.DB.Pool.Query(ctx, `
-		SELECT client_mac, start_date::text, stop_time::text
-		FROM pc_client_access
+	localDateStr := now.Format("2006-01-02")
+	localTimeStr := now.Format("15:04:05")
+
+	_, err := h.DB.Pool.Exec(ctx, `
+		DELETE FROM pc_client_access
 		WHERE subscriber_id = $1
-	`, subscriberID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var macsToDelete []string
-	for rows.Next() {
-		var mac, startDateStr, stopTimeStr string
-		if err := rows.Scan(&mac, &startDateStr, &stopTimeStr); err != nil {
-			return err
-		}
-		if isClientAccessExpired(now, startDateStr, stopTimeStr) {
-			macsToDelete = append(macsToDelete, mac)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	for _, mac := range macsToDelete {
-		_, err := h.DB.Pool.Exec(ctx, `
-			DELETE FROM pc_client_access
-			WHERE subscriber_id = $1 AND client_mac = $2
-		`, subscriberID, mac)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+		  AND (
+		      $2 > start_date
+		      OR ($2 = start_date AND $3 >= stop_time)
+		  )
+	`, subscriberID, localDateStr, localTimeStr)
+	return err
 }
 
 func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
