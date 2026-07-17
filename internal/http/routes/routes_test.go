@@ -673,6 +673,18 @@ func TestParentalControlAPI(t *testing.T) {
 			URL:            "/api/v1/subscribers/{subID}/client-access",
 			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
 			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					UpdatedAt string `json:"updated_at"`
+				}
+				if err := json.Unmarshal(body, &responseData); err != nil {
+					t.Fatalf("failed to parse response: %v", err)
+				}
+				if responseData.UpdatedAt == "" {
+					t.Error("expected non-empty updated_at in response")
+				}
+				vars["updatedAt002"] = responseData.UpdatedAt
+			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-003",
@@ -682,6 +694,9 @@ func TestParentalControlAPI(t *testing.T) {
 			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					UpdatedAt string `json:"updated_at"`
+				}
 				var rawMap map[string]any
 				if err := json.Unmarshal(body, &rawMap); err != nil {
 					t.Fatalf("failed to unmarshal JSON: %v", err)
@@ -692,6 +707,13 @@ func TestParentalControlAPI(t *testing.T) {
 				}
 				if val != nil {
 					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				}
+
+				if err := json.Unmarshal(body, &responseData); err != nil {
+					t.Fatalf("failed to parse response: %v", err)
+				}
+				if responseData.UpdatedAt != vars["updatedAt002"] {
+					t.Errorf("expected updated_at to remain unchanged, but it changed from %q to %q", vars["updatedAt002"], responseData.UpdatedAt)
 				}
 			},
 		},

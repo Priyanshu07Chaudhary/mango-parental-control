@@ -1733,7 +1733,14 @@ func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
 			stop_date = EXCLUDED.stop_date,
 			start_time = EXCLUDED.start_time,
 			stop_time = EXCLUDED.stop_time,
-			updated_at = EXCLUDED.updated_at
+			updated_at = CASE
+				WHEN pc_client_access.start_date != EXCLUDED.start_date
+				  OR pc_client_access.stop_date != EXCLUDED.stop_date
+				  OR pc_client_access.start_time != EXCLUDED.start_time
+				  OR pc_client_access.stop_time != EXCLUDED.stop_time
+				THEN EXCLUDED.updated_at
+				ELSE pc_client_access.updated_at
+			END
 		RETURNING created_at, updated_at
 	`, subID, normalizedMAC, req.StartDate, req.StopDate, req.StartTime, req.StopTime, now).Scan(&createdAt, &updatedAt)
 	if err != nil {
