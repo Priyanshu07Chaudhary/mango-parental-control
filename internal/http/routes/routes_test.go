@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/gofiber/fiber/v3"
@@ -36,6 +37,10 @@ func (m *mockPublicValidator) ValidateAPIKey(ctx context.Context, apiKey string)
 		return nil
 	}
 	return fmt.Errorf("invalid api key")
+}
+
+func normalizeMAC(mac string) string {
+	return strings.ToUpper(mac)
 }
 
 func TestParentalControlAPI(t *testing.T) {
@@ -642,6 +647,339 @@ func TestParentalControlAPI(t *testing.T) {
 				}
 				if val != nil {
 					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-001",
+			Desc:           "Create pause-state successfully",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) == 0 {
+					t.Errorf("expected non-empty config-raw, got: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-002",
+			Desc:           "Replace existing pause-state for same client successfully",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-003",
+			Desc:           "Repeat same pause request with unchanged effective policy",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var rawMap map[string]any
+				if err := json.Unmarshal(body, &rawMap); err != nil {
+					t.Fatalf("failed to unmarshal JSON: %v", err)
+				}
+				val, ok := rawMap["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				}
+				if val != nil {
+					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-004",
+			Desc:           "Missing required field in request body",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-005",
+			Desc:           "Invalid MAC address format",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"invalid-mac","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-006",
+			Desc:           "Invalid date format in enforcement window",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"08-07-2036","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-007",
+			Desc:           "Invalid time format in enforcement window",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"8:30","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-008",
+			Desc:           "Caller-derived overflow window (stop_time less than or equal to start_time due to overflow)",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"23:30:00","stop_time":"00:30:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-009",
+			Desc:           "Caller-provided quick-block window has invalid time ordering",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"09:30:00","stop_time":"08:30:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-010-SETUP",
+			Desc:           "Insert expired client-access row manually to test cleanup",
+			Method:         http.MethodGet,
+			URL:            "/livez",
+			ExpectedStatus: http.StatusOK,
+			Setup: func(t *testing.T, vars map[string]string) {
+				_, err := dbConn.Pool.Exec(context.Background(), `
+					INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
+					VALUES ($1, '00:11:22:33:44:55', '2010-01-01', '2010-01-02', '00:00:00', '01:00:00', NOW(), NOW())
+				`, vars["subID"])
+				if err != nil {
+					t.Fatalf("failed to insert expired client access: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-010",
+			Desc:           "New pause request cleans expired stored rows before rendering effective snapshot",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress2}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var exists bool
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:55')
+				`, vars["subID"]).Scan(&exists)
+				if err != nil {
+					t.Fatalf("db error: %v", err)
+				}
+				if exists {
+					t.Error("expected expired client-access row to be cleaned up/deleted")
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-011",
+			Desc:           "Valid single-block-day request succeeds",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) == 0 {
+					t.Errorf("expected non-empty config-raw, got: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-012",
+			Desc:           "Same-date window (start_date equals stop_date) is rejected",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-08","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-013",
+			Desc:           "Stop date not equal to the next calendar date after start_date is rejected",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-10","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-014-SETUP",
+			Desc:           "Link active schedule to subscriber to set up overlapping block",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups",
+			RequestBody:    `{"name":"Overlap Group"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var created struct {
+					ID string `json:"id"`
+				}
+				_ = json.Unmarshal(body, &created)
+				vars["overlapGroupID"] = created.ID
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-014-SETUP2",
+			Desc:           "Add device to overlap group",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups/{overlapGroupID}/devices",
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-014-SETUP3",
+			Desc:           "Link schedule to overlap group",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/groups/{overlapGroupID}/schedules",
+			RequestBody:    `{"schedule_id":"{schID1}"}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-014",
+			Desc:           "Pause client that is already covered by active group/schedule policy",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) < 4 {
+					t.Errorf("expected merged config-raw containing multiple policies, got: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-001",
+			Desc:           "Remove existing pause-state successfully while other active pause-state rows remain",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress2}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var exists bool
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = $2)
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&exists)
+				if err != nil {
+					t.Fatalf("db error: %v", err)
+				}
+				if !exists {
+					t.Error("expected macAddress1 client-access row to remain")
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-005",
+			Desc:           "Unpause client-access state for client still covered by active group/schedule policy",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) == 0 {
+					t.Errorf("expected schedule-based config-raw rules to remain, got: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-005-TEARDOWN",
+			Desc:           "Clean up overlap group to test empty config-raw",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/groups/{overlapGroupID}",
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-002-SETUP",
+			Desc:           "Add pause-state again to prepare for final policy delete",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-002",
+			Desc:           "Remove existing pause-state when it is the final active parental-control policy across both client-access and group/schedule models",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var responseData map[string]json.RawMessage
+				if err := json.Unmarshal(body, &responseData); err != nil {
+					t.Fatalf("failed to parse response: %v", err)
+				}
+				raw, ok := responseData["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key in response, but it was missing")
+					return
+				}
+				if string(raw) != "[]" {
+					t.Errorf("expected empty config-raw array [], got: %s", string(raw))
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-003",
+			Desc:           "Remove pause-state when target client is already absent",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var rawMap map[string]any
+				if err := json.Unmarshal(body, &rawMap); err != nil {
+					t.Fatalf("failed to unmarshal JSON: %v", err)
+				}
+				val, ok := rawMap["config-raw"]
+				if !ok {
+					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				}
+				if val != nil {
+					t.Errorf("expected 'config-raw' to be null for no-op unpause, got: %v", val)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-004-SETUP",
+			Desc:           "Insert expired client-access row manually to test cleanup on delete",
+			Method:         http.MethodGet,
+			URL:            "/livez",
+			ExpectedStatus: http.StatusOK,
+			Setup: func(t *testing.T, vars map[string]string) {
+				_, err := dbConn.Pool.Exec(context.Background(), `
+					INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
+					VALUES ($1, '00:11:22:33:44:55', '2010-01-01', '2010-01-02', '00:00:00', '01:00:00', NOW(), NOW())
+				`, vars["subID"])
+				if err != nil {
+					t.Fatalf("failed to insert expired client access: %v", err)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-004",
+			Desc:           "Unpause request also clears expired stored rows before rendering effective snapshot",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var exists bool
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:55')
+				`, vars["subID"]).Scan(&exists)
+				if err != nil {
+					t.Fatalf("db error: %v", err)
+				}
+				if exists {
+					t.Error("expected expired client-access row to be cleaned up/deleted on unpause")
 				}
 			},
 		},
