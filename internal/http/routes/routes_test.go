@@ -847,7 +847,7 @@ func TestParentalControlAPI(t *testing.T) {
 			Desc:           "Pause client that is already covered by active group/schedule policy",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
 				var responseData struct {
