@@ -24,6 +24,7 @@ import (
 )
 
 var macRegex = regexp.MustCompile(`^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$`)
+var timeRegex = regexp.MustCompile(`^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]$`)
 
 func validateUUID(s string) bool {
 	_, err := uuid.Parse(s)
@@ -36,6 +37,20 @@ func validateMAC(s string) bool {
 
 func normalizeMAC(s string) string {
 	return strings.ToUpper(s)
+}
+
+func isClientAccessExpired(now time.Time, startDateStr, stopTimeStr string) bool {
+	localDateStr := now.Format("2006-01-02")
+	if localDateStr > startDateStr {
+		return true
+	}
+	if localDateStr == startDateStr {
+		localTimeStr := now.Format("15:04:05")
+		if localTimeStr >= stopTimeStr {
+			return true
+		}
+	}
+	return false
 }
 
 func sendError(c fiber.Ctx, status int, code, message string, details map[string]any) error {
@@ -417,7 +432,70 @@ func renderConfigRaw(ctx context.Context, dbConn *db.Database, subscriberID stri
 		)
 	}
 
+	type dbClientAccess struct {
+		ClientMAC string
+		StartDate string
+		StopDate  string
+		StartTime string
+		StopTime  string
+	}
+	caRows, err := dbConn.Pool.Query(ctx, `
+		SELECT client_mac, start_date::text, stop_date::text, start_time::text, stop_time::text
+		FROM pc_client_access
+		WHERE subscriber_id = $1
+	`, subscriberID)
+	if err != nil {
+		return nil, err
+	}
+	defer caRows.Close()
+
+	nowTime := time.Now()
+	var clientAccesses []dbClientAccess
+	for caRows.Next() {
+		var ca dbClientAccess
+		if err := caRows.Scan(&ca.ClientMAC, &ca.StartDate, &ca.StopDate, &ca.StartTime, &ca.StopTime); err != nil {
+			return nil, err
+		}
+		if !isClientAccessExpired(nowTime, ca.StartDate, ca.StopTime) {
+			clientAccesses = append(clientAccesses, ca)
+		}
+	}
+	if err := caRows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range clientAccesses {
+		clientAccesses[i].ClientMAC = normalizeMAC(clientAccesses[i].ClientMAC)
+	}
+	sort.Slice(clientAccesses, func(i, j int) bool {
+		return clientAccesses[i].ClientMAC < clientAccesses[j].ClientMAC
+	})
+
+	var clientAccessCommands []models.ConfigRawCommand
+	for _, ca := range clientAccesses {
+		macToken := strings.ReplaceAll(ca.ClientMAC, ":", "_")
+		secName := "firewall.pc_client_access_" + macToken
+		dispName := "PC_ClientAccess_" + macToken
+
+		clientAccessCommands = append(clientAccessCommands,
+			models.ConfigRawCommand{"set", secName, "rule"},
+			models.ConfigRawCommand{"set", secName + ".name", dispName},
+			models.ConfigRawCommand{"set", secName + ".enabled", "1"},
+			models.ConfigRawCommand{"set", secName + ".src", defaults.Src},
+			models.ConfigRawCommand{"set", secName + ".dest", defaults.Dest},
+			models.ConfigRawCommand{"set", secName + ".family", defaults.Family},
+			models.ConfigRawCommand{"set", secName + ".proto", defaults.Proto},
+			models.ConfigRawCommand{"set", secName + ".target", defaults.Target},
+			models.ConfigRawCommand{"set", secName + ".start_date", ca.StartDate},
+			models.ConfigRawCommand{"set", secName + ".stop_date", ca.StopDate},
+			models.ConfigRawCommand{"set", secName + ".start_time", ca.StartTime},
+			models.ConfigRawCommand{"set", secName + ".stop_time", ca.StopTime},
+			models.ConfigRawCommand{"add_list", secName + ".src_mac", ca.ClientMAC},
+		)
+	}
+
 	finalCommands = append(finalCommands, rulesCommands...)
+	finalCommands = append(finalCommands, clientAccessCommands...)
 	return finalCommands, nil
 }
 
@@ -1579,4 +1657,165 @@ func (h *ServiceHandler) GetGroupScheduleLink(c fiber.Ctx) error {
 	}
 
 	return c.JSON(link)
+}
+
+func (h *ServiceHandler) cleanupExpiredClientAccess(ctx context.Context, subscriberID string) error {
+	now := time.Now()
+	localDateStr := now.Format("2006-01-02")
+	localTimeStr := now.Format("15:04:05")
+
+	_, err := h.DB.Pool.Exec(ctx, `
+		DELETE FROM pc_client_access
+		WHERE subscriber_id = $1
+		  AND (
+		      $2 > start_date
+		      OR ($2 = start_date AND $3 >= stop_time)
+		  )
+	`, subscriberID, localDateStr, localTimeStr)
+	return err
+}
+
+func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
+	subID := c.Params("subscriber_id")
+	if !validateUUID(subID) {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Invalid subscriber UUID format", nil)
+	}
+
+	var req models.ClientAccessCreateRequest
+	if err := c.Bind().JSON(&req); err != nil {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Malformed JSON body", nil)
+	}
+
+	if err := validateExtraFields(c.Body(), []string{"client_mac", "start_date", "stop_date", "start_time", "stop_time"}); err != nil {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", err.Error(), nil)
+	}
+
+	if err := validateClientAccessRequest(req, time.Now()); err != nil {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", err.Error(), nil)
+	}
+
+	// before upsert, clean expired client-access rows for this subscriber
+	if err := h.cleanupExpiredClientAccess(c.Context(), subID); err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	normalizedMAC := normalizeMAC(req.ClientMAC)
+	now := time.Now().UTC()
+
+	var createdAt, updatedAt time.Time
+	err := h.DB.Pool.QueryRow(c.Context(), `
+		INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		ON CONFLICT (subscriber_id, client_mac) DO UPDATE
+		SET start_date = EXCLUDED.start_date,
+			stop_date = EXCLUDED.stop_date,
+			start_time = EXCLUDED.start_time,
+			stop_time = EXCLUDED.stop_time,
+			updated_at = CASE
+				WHEN pc_client_access.start_date != EXCLUDED.start_date
+				  OR pc_client_access.stop_date != EXCLUDED.stop_date
+				  OR pc_client_access.start_time != EXCLUDED.start_time
+				  OR pc_client_access.stop_time != EXCLUDED.stop_time
+				THEN EXCLUDED.updated_at
+				ELSE pc_client_access.updated_at
+			END
+		RETURNING created_at, updated_at
+	`, subID, normalizedMAC, req.StartDate, req.StopDate, req.StartTime, req.StopTime, now).Scan(&createdAt, &updatedAt)
+	if err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	cfgRaw, _, err := handleConfigRaw(c.Context(), h.DB, subID)
+	if err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	return c.JSON(models.ClientAccessWriteResponse{
+		ClientAccessState: models.ClientAccessState{
+			SubscriberID: subID,
+			ClientMAC:    normalizedMAC,
+			StartDate:    req.StartDate,
+			StopDate:     req.StopDate,
+			StartTime:    req.StartTime,
+			StopTime:     req.StopTime,
+			CreatedAt:    createdAt,
+			UpdatedAt:    updatedAt,
+		},
+		ConfigRaw: cfgRaw,
+	})
+}
+
+func (h *ServiceHandler) DeleteClientAccess(c fiber.Ctx) error {
+	subID := c.Params("subscriber_id")
+	mac := c.Params("client_mac")
+	if !validateUUID(subID) {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Invalid subscriber UUID format", nil)
+	}
+	if !validateMAC(mac) {
+		return sendError(c, fiber.StatusBadRequest, "invalid_request", "Invalid MAC address format", nil)
+	}
+
+	// before delete, clean expired client-access rows for this subscriber
+	if err := h.cleanupExpiredClientAccess(c.Context(), subID); err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	normalizedMAC := normalizeMAC(mac)
+
+	_, err := h.DB.Pool.Exec(c.Context(), `
+		DELETE FROM pc_client_access
+		WHERE subscriber_id = $1 AND client_mac = $2
+	`, subID, normalizedMAC)
+	if err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	cfgRaw, _, err := handleConfigRaw(c.Context(), h.DB, subID)
+	if err != nil {
+		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
+	}
+
+	return c.JSON(models.ConfigRawResponse{
+		ConfigRaw: cfgRaw,
+	})
+}
+
+func validateClientAccessRequest(req models.ClientAccessCreateRequest, now time.Time) error {
+	if req.ClientMAC == "" || req.StartDate == "" || req.StopDate == "" || req.StartTime == "" || req.StopTime == "" {
+		return fmt.Errorf("Missing required fields")
+	}
+
+	if !validateMAC(req.ClientMAC) {
+		return fmt.Errorf("Invalid MAC address format")
+	}
+
+	tStartDate, err1 := time.Parse("2006-01-02", req.StartDate)
+	tStopDate, err2 := time.Parse("2006-01-02", req.StopDate)
+	if err1 != nil || err2 != nil {
+		return fmt.Errorf("Invalid date format")
+	}
+
+	if !timeRegex.MatchString(req.StartTime) || !timeRegex.MatchString(req.StopTime) {
+		return fmt.Errorf("Invalid time format")
+	}
+
+	tStartTime, err3 := time.Parse("15:04:05", req.StartTime)
+	tStopTime, err4 := time.Parse("15:04:05", req.StopTime)
+	if err3 != nil || err4 != nil {
+		return fmt.Errorf("Invalid time format")
+	}
+
+	if !tStopDate.Equal(tStartDate.AddDate(0, 0, 1)) {
+		return fmt.Errorf("stop_date must be exactly the next calendar date after start_date (e.g., if start_date is %s, stop_date must be %s)", req.StartDate, tStartDate.AddDate(0, 0, 1).Format("2006-01-02"))
+	}
+
+	if !tStopTime.After(tStartTime) {
+		return fmt.Errorf("stop_time must be strictly greater than start_time")
+	}
+
+	if isClientAccessExpired(now, req.StartDate, req.StopTime) {
+		return fmt.Errorf("Cannot create an already expired client-access time window")
+	}
+
+	return nil
 }

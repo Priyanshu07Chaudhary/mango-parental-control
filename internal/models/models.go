@@ -138,3 +138,30 @@ type ErrorDetail struct {
 	Message string         `json:"message"`
 	Details map[string]any `json:"details,omitempty"`
 }
+
+// ClientAccessState represents a per-MAC client-access blocking window.
+type ClientAccessState struct {
+	SubscriberID string    `json:"subscriber_id"`
+	ClientMAC    string    `json:"client_mac"`
+	StartDate    string    `json:"start_date"`
+	StopDate     string    `json:"stop_date"`
+	StartTime    string    `json:"start_time"`
+	StopTime     string    `json:"stop_time"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+// ClientAccessCreateRequest payload for POST /api/v1/subscribers/{subscriber_id}/client-access
+type ClientAccessCreateRequest struct {
+	ClientMAC string `json:"client_mac"`
+	StartDate string `json:"start_date"`
+	StopDate  string `json:"stop_date"`
+	StartTime string `json:"start_time"`
+	StopTime  string `json:"stop_time"`
+}
+
+// ClientAccessWriteResponse represents ClientAccessState + config-raw
+type ClientAccessWriteResponse struct {
+	ClientAccessState
+	ConfigRaw []ConfigRawCommand `json:"config-raw"`
+}

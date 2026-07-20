@@ -68,6 +68,10 @@ func registerAPIRoutes(router fiber.Router, h *handlers.ServiceHandler) {
 	router.Post("/api/v1/subscribers/:subscriber_id/groups/:group_id/schedules", h.LinkSchedule)
 	router.Put("/api/v1/subscribers/:subscriber_id/groups/:group_id/schedules", h.ReplaceSchedules)
 	router.Delete("/api/v1/subscribers/:subscriber_id/groups/:group_id/schedules/:schedule_id", h.UnlinkSchedule)
+
+	// Client-access routes
+	router.Post("/api/v1/subscribers/:subscriber_id/client-access", h.CreateClientAccess)
+	router.Delete("/api/v1/subscribers/:subscriber_id/client-access/:client_mac", h.DeleteClientAccess)
 }
 
 func registerLivenessRoute(app *fiber.App) {
