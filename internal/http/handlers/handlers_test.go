@@ -173,11 +173,11 @@ func TestFormatAndRender(t *testing.T) {
 		input []int
 		want  string
 	}{
-		{[]int{}, ""},
-		{[]int{1}, "Mon"},
-		{[]int{5, 0, 3}, "Sun Wed Fri"},
-		{[]int{0, 1, 2, 3, 4, 5, 6}, "Sun Mon Tue Wed Thu Fri Sat"},
-		{[]int{0, 7, 2, -1}, "Sun Tue"},
+		{[]int{}, "''"},
+		{[]int{1}, "'Mon'"},
+		{[]int{5, 0, 3}, "'Sun Wed Fri'"},
+		{[]int{0, 1, 2, 3, 4, 5, 6}, "'Sun Mon Tue Wed Thu Fri Sat'"},
+		{[]int{0, 7, 2, -1}, "'Sun Tue'"},
 	}
 	for _, tt := range wkTests {
 		if got := renderWeekdays(tt.input); got != tt.want {

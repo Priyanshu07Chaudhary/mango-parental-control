@@ -222,7 +222,7 @@ func renderWeekdays(weekdays []int) string {
 			parts = append(parts, names[w])
 		}
 	}
-	return strings.Join(parts, " ")
+	return "'" + strings.Join(parts, " ") + "'"
 }
 
 func renderConfigRaw(ctx context.Context, dbConn *db.Database, subscriberID string) ([]models.ConfigRawCommand, error) {
