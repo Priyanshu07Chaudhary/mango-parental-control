@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -139,83 +140,117 @@ func TestClientAccessMACValidation(t *testing.T) {
 }
 
 func TestValidateClientAccessRequest(t *testing.T) {
-	baseReq := models.ClientAccessCreateRequest{
-		ClientMAC: "AA:BB:CC:DD:EE:FF",
-		StartDate: "2036-07-08",
-		StopDate:  "2036-07-09",
-		StartTime: "07:30:00",
-		StopTime:  "08:00:00",
-	}
-
 	tests := []struct {
 		name       string
-		modify     func(*models.ClientAccessCreateRequest)
+		body       string
 		now        time.Time
 		wantErrSub string
 	}{
 		{
-			name:       "valid request",
-			modify:     func(r *models.ClientAccessCreateRequest) {},
+			name:       "valid permanent request with only client_mac",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF"}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "",
+		},
+		{
+			name:       "valid timed request with all four boundary fields",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "",
+		},
+		{
+			name:       "valid timed request current time before expiration",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "",
 		},
 		{
 			name:       "missing client_mac",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.ClientMAC = "" },
-			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
-			wantErrSub: "Missing required fields",
-		},
-		{
-			name:       "missing start_date",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StartDate = "" },
+			body:       `{"start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "Missing required fields",
 		},
 		{
 			name:       "invalid MAC format",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.ClientMAC = "invalid-mac" },
+			body:       `{"client_mac":"invalid-mac"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "Invalid MAC address format",
 		},
 		{
-			name:       "invalid start_date format",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StartDate = "08-07-2036" },
+			name:       "only start_date present",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08"}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "only one date/time field missing (stop_time missing)",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00"}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "two boundary fields present",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09"}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "all four keys present with null values",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":null,"stop_date":null,"start_time":null,"stop_time":null}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "all four keys present with empty-string values",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"","stop_date":"","start_time":"","stop_time":""}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "one key explicitly null while other three are valid",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":null}`,
+			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
+			wantErrSub: "Missing required fields",
+		},
+		{
+			name:       "malformed date",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"08-07-2036","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "Invalid date format",
 		},
 		{
-			name:       "invalid start_time format",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StartTime = "7:30" },
+			name:       "malformed time",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"7:30","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "Invalid time format",
 		},
 		{
-			name:       "stop_date equal to start_date",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StopDate = "2036-07-08" },
+			name:       "stop date equal to start date",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-08","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "stop_date must be exactly the next calendar date",
 		},
 		{
-			name:       "stop_date two days later",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StopDate = "2036-07-10" },
+			name:       "stop date more than one day after start date",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-10","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "stop_date must be exactly the next calendar date",
 		},
 		{
-			name:       "stop_time less than start_time (invalid ordering)",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StopTime = "07:00:00" },
+			name:       "stop time less than start time",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:00:00","stop_time":"07:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "stop_time must be strictly greater than start_time",
 		},
 		{
-			name:       "overflow window (stop_time less than start_time)",
-			modify:     func(r *models.ClientAccessCreateRequest) { r.StartTime = "23:30:00"; r.StopTime = "00:30:00" },
+			name:       "stop time equal to start time",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:00:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 8, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "stop_time must be strictly greater than start_time",
 		},
 		{
-			name:       "already expired window",
-			modify:     func(r *models.ClientAccessCreateRequest) {},
+			name:       "already-expired timed block",
+			body:       `{"client_mac":"AA:BB:CC:DD:EE:FF","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			now:        time.Date(2036, 7, 10, 0, 0, 0, 0, time.UTC),
 			wantErrSub: "Cannot create an already expired client-access time window",
 		},
@@ -223,9 +258,9 @@ func TestValidateClientAccessRequest(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := baseReq
-			tt.modify(&req)
-			err := validateClientAccessRequest(req, tt.now)
+			var req models.ClientAccessCreateRequest
+			_ = json.Unmarshal([]byte(tt.body), &req)
+			err := validateClientAccessRequest([]byte(tt.body), req, tt.now)
 			if tt.wantErrSub == "" {
 				if err != nil {
 					t.Errorf("expected no error, got: %v", err)

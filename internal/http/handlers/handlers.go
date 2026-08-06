@@ -434,10 +434,10 @@ func renderConfigRaw(ctx context.Context, dbConn *db.Database, subscriberID stri
 
 	type dbClientAccess struct {
 		ClientMAC string
-		StartDate string
-		StopDate  string
-		StartTime string
-		StopTime  string
+		StartDate *string
+		StopDate  *string
+		StartTime *string
+		StopTime  *string
 	}
 	caRows, err := dbConn.Pool.Query(ctx, `
 		SELECT client_mac, start_date::text, stop_date::text, start_time::text, stop_time::text
@@ -449,15 +449,22 @@ func renderConfigRaw(ctx context.Context, dbConn *db.Database, subscriberID stri
 	}
 	defer caRows.Close()
 
-	nowTime := time.Now()
+	nowTime := time.Now().UTC()
 	var clientAccesses []dbClientAccess
 	for caRows.Next() {
 		var ca dbClientAccess
 		if err := caRows.Scan(&ca.ClientMAC, &ca.StartDate, &ca.StopDate, &ca.StartTime, &ca.StopTime); err != nil {
 			return nil, err
 		}
-		if !isClientAccessExpired(nowTime, ca.StartDate, ca.StopTime) {
+		hasAllNull := ca.StartDate == nil && ca.StopDate == nil && ca.StartTime == nil && ca.StopTime == nil
+		hasAllNonNull := ca.StartDate != nil && ca.StopDate != nil && ca.StartTime != nil && ca.StopTime != nil
+
+		if hasAllNull {
 			clientAccesses = append(clientAccesses, ca)
+		} else if hasAllNonNull {
+			if !isClientAccessExpired(nowTime, *ca.StartDate, *ca.StopTime) {
+				clientAccesses = append(clientAccesses, ca)
+			}
 		}
 	}
 	if err := caRows.Err(); err != nil {
@@ -486,12 +493,16 @@ func renderConfigRaw(ctx context.Context, dbConn *db.Database, subscriberID stri
 			models.ConfigRawCommand{"set", secName + ".family", defaults.Family},
 			models.ConfigRawCommand{"set", secName + ".proto", defaults.Proto},
 			models.ConfigRawCommand{"set", secName + ".target", defaults.Target},
-			models.ConfigRawCommand{"set", secName + ".start_date", ca.StartDate},
-			models.ConfigRawCommand{"set", secName + ".stop_date", ca.StopDate},
-			models.ConfigRawCommand{"set", secName + ".start_time", ca.StartTime},
-			models.ConfigRawCommand{"set", secName + ".stop_time", ca.StopTime},
-			models.ConfigRawCommand{"add_list", secName + ".src_mac", ca.ClientMAC},
 		)
+		if ca.StartDate != nil && ca.StopDate != nil && ca.StartTime != nil && ca.StopTime != nil {
+			clientAccessCommands = append(clientAccessCommands,
+				models.ConfigRawCommand{"set", secName + ".start_date", *ca.StartDate},
+				models.ConfigRawCommand{"set", secName + ".stop_date", *ca.StopDate},
+				models.ConfigRawCommand{"set", secName + ".start_time", *ca.StartTime},
+				models.ConfigRawCommand{"set", secName + ".stop_time", *ca.StopTime},
+			)
+		}
+		clientAccessCommands = append(clientAccessCommands, models.ConfigRawCommand{"add_list", secName + ".src_mac", ca.ClientMAC})
 	}
 
 	finalCommands = append(finalCommands, rulesCommands...)
@@ -1660,13 +1671,17 @@ func (h *ServiceHandler) GetGroupScheduleLink(c fiber.Ctx) error {
 }
 
 func (h *ServiceHandler) cleanupExpiredClientAccess(ctx context.Context, subscriberID string) error {
-	now := time.Now()
+	now := time.Now().UTC()
 	localDateStr := now.Format("2006-01-02")
 	localTimeStr := now.Format("15:04:05")
 
 	_, err := h.DB.Pool.Exec(ctx, `
 		DELETE FROM pc_client_access
 		WHERE subscriber_id = $1
+		  AND start_date IS NOT NULL
+		  AND stop_date IS NOT NULL
+		  AND start_time IS NOT NULL
+		  AND stop_time IS NOT NULL
 		  AND (
 		      $2 > start_date
 		      OR ($2 = start_date AND $3 >= stop_time)
@@ -1690,11 +1705,11 @@ func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
 		return sendError(c, fiber.StatusBadRequest, "invalid_request", err.Error(), nil)
 	}
 
-	if err := validateClientAccessRequest(req, time.Now()); err != nil {
+	if err := validateClientAccessRequest(c.Body(), req, time.Now().UTC()); err != nil {
 		return sendError(c, fiber.StatusBadRequest, "invalid_request", err.Error(), nil)
 	}
 
-	// before upsert, clean expired client-access rows for this subscriber
+	// before insert, clean expired client-access rows for this subscriber
 	if err := h.cleanupExpiredClientAccess(c.Context(), subID); err != nil {
 		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
 	}
@@ -1706,22 +1721,13 @@ func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
 	err := h.DB.Pool.QueryRow(c.Context(), `
 		INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		ON CONFLICT (subscriber_id, client_mac) DO UPDATE
-		SET start_date = EXCLUDED.start_date,
-			stop_date = EXCLUDED.stop_date,
-			start_time = EXCLUDED.start_time,
-			stop_time = EXCLUDED.stop_time,
-			updated_at = CASE
-				WHEN pc_client_access.start_date != EXCLUDED.start_date
-				  OR pc_client_access.stop_date != EXCLUDED.stop_date
-				  OR pc_client_access.start_time != EXCLUDED.start_time
-				  OR pc_client_access.stop_time != EXCLUDED.stop_time
-				THEN EXCLUDED.updated_at
-				ELSE pc_client_access.updated_at
-			END
 		RETURNING created_at, updated_at
 	`, subID, normalizedMAC, req.StartDate, req.StopDate, req.StartTime, req.StopTime, now).Scan(&createdAt, &updatedAt)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return sendError(c, fiber.StatusConflict, "client_access_exists", "Client access rule already exists; unblock the client before creating another rule", nil)
+		}
 		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
 	}
 
@@ -1780,8 +1786,8 @@ func (h *ServiceHandler) DeleteClientAccess(c fiber.Ctx) error {
 	})
 }
 
-func validateClientAccessRequest(req models.ClientAccessCreateRequest, now time.Time) error {
-	if req.ClientMAC == "" || req.StartDate == "" || req.StopDate == "" || req.StartTime == "" || req.StopTime == "" {
+func validateClientAccessRequest(body []byte, req models.ClientAccessCreateRequest, now time.Time) error {
+	if req.ClientMAC == "" {
 		return fmt.Errorf("Missing required fields")
 	}
 
@@ -1789,31 +1795,79 @@ func validateClientAccessRequest(req models.ClientAccessCreateRequest, now time.
 		return fmt.Errorf("Invalid MAC address format")
 	}
 
-	tStartDate, err1 := time.Parse("2006-01-02", req.StartDate)
-	tStopDate, err2 := time.Parse("2006-01-02", req.StopDate)
+	var rawMap map[string]json.RawMessage
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &rawMap)
+	} else {
+		body, _ = json.Marshal(req)
+		_ = json.Unmarshal(body, &rawMap)
+	}
+
+	_, hasStartDateKey := rawMap["start_date"]
+	_, hasStopDateKey := rawMap["stop_date"]
+	_, hasStartTimeKey := rawMap["start_time"]
+	_, hasStopTimeKey := rawMap["stop_time"]
+
+	countKeys := 0
+	if hasStartDateKey {
+		countKeys++
+	}
+	if hasStopDateKey {
+		countKeys++
+	}
+	if hasStartTimeKey {
+		countKeys++
+	}
+	if hasStopTimeKey {
+		countKeys++
+	}
+
+	if countKeys == 0 {
+		return nil
+	}
+
+	if countKeys != 4 {
+		return fmt.Errorf("Missing required fields")
+	}
+
+	if req.StartDate == nil || req.StopDate == nil || req.StartTime == nil || req.StopTime == nil {
+		return fmt.Errorf("Missing required fields")
+	}
+
+	startDate := *req.StartDate
+	stopDate := *req.StopDate
+	startTime := *req.StartTime
+	stopTime := *req.StopTime
+
+	if startDate == "" || stopDate == "" || startTime == "" || stopTime == "" {
+		return fmt.Errorf("Missing required fields")
+	}
+
+	tStartDate, err1 := time.Parse("2006-01-02", startDate)
+	tStopDate, err2 := time.Parse("2006-01-02", stopDate)
 	if err1 != nil || err2 != nil {
 		return fmt.Errorf("Invalid date format")
 	}
 
-	if !timeRegex.MatchString(req.StartTime) || !timeRegex.MatchString(req.StopTime) {
+	if !timeRegex.MatchString(startTime) || !timeRegex.MatchString(stopTime) {
 		return fmt.Errorf("Invalid time format")
 	}
 
-	tStartTime, err3 := time.Parse("15:04:05", req.StartTime)
-	tStopTime, err4 := time.Parse("15:04:05", req.StopTime)
+	tStartTime, err3 := time.Parse("15:04:05", startTime)
+	tStopTime, err4 := time.Parse("15:04:05", stopTime)
 	if err3 != nil || err4 != nil {
 		return fmt.Errorf("Invalid time format")
 	}
 
 	if !tStopDate.Equal(tStartDate.AddDate(0, 0, 1)) {
-		return fmt.Errorf("stop_date must be exactly the next calendar date after start_date (e.g., if start_date is %s, stop_date must be %s)", req.StartDate, tStartDate.AddDate(0, 0, 1).Format("2006-01-02"))
+		return fmt.Errorf("stop_date must be exactly the next calendar date after start_date (e.g., if start_date is %s, stop_date must be %s)", startDate, tStartDate.AddDate(0, 0, 1).Format("2006-01-02"))
 	}
 
 	if !tStopTime.After(tStartTime) {
 		return fmt.Errorf("stop_time must be strictly greater than start_time")
 	}
 
-	if isClientAccessExpired(now, req.StartDate, req.StopTime) {
+	if isClientAccessExpired(now.UTC(), startDate, stopTime) {
 		return fmt.Errorf("Cannot create an already expired client-access time window")
 	}
 

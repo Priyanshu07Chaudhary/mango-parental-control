@@ -143,21 +143,21 @@ type ErrorDetail struct {
 type ClientAccessState struct {
 	SubscriberID string    `json:"subscriber_id"`
 	ClientMAC    string    `json:"client_mac"`
-	StartDate    string    `json:"start_date"`
-	StopDate     string    `json:"stop_date"`
-	StartTime    string    `json:"start_time"`
-	StopTime     string    `json:"stop_time"`
+	StartDate    *string   `json:"start_date,omitempty"`
+	StopDate     *string   `json:"stop_date,omitempty"`
+	StartTime    *string   `json:"start_time,omitempty"`
+	StopTime     *string   `json:"stop_time,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // ClientAccessCreateRequest payload for POST /api/v1/subscribers/{subscriber_id}/client-access
 type ClientAccessCreateRequest struct {
-	ClientMAC string `json:"client_mac"`
-	StartDate string `json:"start_date"`
-	StopDate  string `json:"stop_date"`
-	StartTime string `json:"start_time"`
-	StopTime  string `json:"stop_time"`
+	ClientMAC string  `json:"client_mac"`
+	StartDate *string `json:"start_date,omitempty"`
+	StopDate  *string `json:"stop_date,omitempty"`
+	StartTime *string `json:"start_time,omitempty"`
+	StopTime  *string `json:"stop_time,omitempty"`
 }
 
 // ClientAccessWriteResponse represents ClientAccessState + config-raw
