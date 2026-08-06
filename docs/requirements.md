@@ -218,11 +218,15 @@ Date/time boundary fields must either all be present (timed block) or all be abs
 Creating a client-access rule for a client MAC that already has an active client-access rule (permanent or timed) returns HTTP 409 Conflict with error code `client_access_exists`. The caller must unpause the client before creating a new client-access rule.
 
 For timed blocks in the current phase:
-- Userportal / `owsub` derives the effective enforcement window from subscriber-provided duration and normalizes dates and times to the gateway/router local timezone before calling Mango Parental Control Service.
-- Mango Parental Control Service shall not resolve or convert timezone context for timed requests.
+- Userportal / `owsub` derives the effective enforcement window from the subscriber-facing request.
+- Userportal / `owsub` resolves any required subscriber or venue timezone context and converts the resulting enforcement window to UTC before calling Mango Parental Control Service.
+- `start_date`, `stop_date`, `start_time`, and `stop_time` in the Mango Parental Control request are UTC boundary values.
+- Mango Parental Control Service shall not resolve subscriber, venue, gateway, router, or server timezone context for timed requests.
+- Mango Parental Control Service shall interpret the supplied timed boundary fields as UTC and shall compare them against the current UTC date and time for validation, expiration cleanup, effective-policy evaluation, and `config-raw` rendering.
 - Permanent requests require no timezone calculation or boundary resolution.
-- `start_date` shall be the intended block date, `stop_date` shall be exactly the next calendar date, and `start_time` and `stop_time` shall describe the active interval on the intended block date, with `stop_time` greater than `start_time`. The next-day `stop_date` is required by the supported firewall request shape and does not represent a subscriber-facing multi-day block.
-- For timed requests, the parental-control service shall receive the caller-prepared enforcement window as part of the internal request body and shall use it for persistence, effective policy calculation, and supported firewall-oriented `config-raw` generation.
+- `start_date` shall be the intended UTC block date, `stop_date` shall be exactly the next UTC calendar date, and `start_time` and `stop_time` shall describe the active interval on the intended UTC block date, with `stop_time` greater than `start_time`.
+- The next-day `stop_date` is required by the supported firewall request shape and does not represent a subscriber-facing multi-day block.
+- For timed requests, the parental-control service shall persist and render the caller-prepared UTC enforcement window without performing additional timezone conversion.
 
 This API shall not require the caller to first create parental-control groups, create schedules, or link schedules to groups through the existing parental-control resource APIs.
 
@@ -238,7 +242,7 @@ For this API:
 | User validation | `owsub` / Userportal |
 | Device ownership validation | `owsub` / Userportal and supporting topology/provisioning services |
 | Derivation of effective enforcement window from subscriber pause duration (timed mode only) | `owsub` / Userportal |
-| Gateway-local timezone normalization for timed boundary fields | `owsub` / Userportal |
+| UTC enforcement-window derivation and timezone normalization for timed boundary fields | `owsub` / Userportal |
 | Pause/unpause request construction | `owsub` / Userportal |
 | Stored pause-state persistence for this API | Mango Parental Control Service |
 | Pause/unpause `config-raw` generation | Mango Parental Control Service |
@@ -295,19 +299,20 @@ The parental-control service shall validate service-owned request and rendering 
 - Permanent requests require `client_mac` and omitting all date/time boundary fields.
 - Timed requests require `client_mac` and all four date/time boundary fields (`start_date`, `stop_date`, `start_time`, `stop_time`).
 - Partial boundary fields, explicit null values, or empty strings return HTTP 400 Bad Request.
-- For timed requests, the service verifies that `stop_date` is exactly the next calendar date after `start_date` and `stop_time` is strictly greater than `start_time`. If the enforcement window is invalid or already expired, the service rejects the request with HTTP 400 Bad Request instead of auto-splitting, auto-extending, or auto-normalizing.
+- For timed requests, the service verifies that `stop_date` is exactly the next UTC calendar date after `start_date`, that `stop_time` is strictly greater than `start_time`, and that the supplied UTC enforcement window has not already expired relative to the current UTC time.
 - Attempting to create a client-access rule for an already paused client MAC returns HTTP 409 Conflict (`client_access_exists`).
 
 ### Expiry and Cleanup Behavior
 
 This API does not require a background timer, worker, or thread to update stored pause-state rows continuously.
 
-Instead, when this API is called again, the service shall evaluate previously stored rows against the current effective time window:
+Instead, when this API is called again, the service shall evaluate previously stored timed rows against the current UTC date and time:
 
-- Permanent rows (having SQL NULL boundary columns) do not expire and are excluded from cleanup.
-- Timed rows that are no longer in range shall be removed before rendering the new effective snapshot.
-- Timed rows that remain in range shall continue to contribute to the effective snapshot.
-- Unpause behavior shall remove the matching subscriber-scoped pause-state row for the target MAC before rendering the updated snapshot.
+- Permanent rows, which have SQL `NULL` boundary columns, do not expire and are excluded from cleanup.
+- Timed boundary fields are stored and interpreted as UTC.
+- Timed rows that are expired relative to the current UTC time shall be removed before rendering the new effective snapshot.
+- Timed rows that remain active relative to the current UTC time shall continue to contribute to the effective snapshot.
+- Unpause behavior shall remove the matching subscriber-scoped pause-state row before rendering the updated snapshot.
 
 ### Runtime Behavior
 

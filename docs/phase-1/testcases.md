@@ -148,11 +148,14 @@ Endpoints:
 - `DELETE /api/v1/subscribers/{subscriber_id}/client-access/{client_mac}` (Unpause)
 
 Notes:
+
 - Supports two valid request shapes: permanent block (`client_mac` only) and timed block (`client_mac` with all four date/time fields).
-- Database columns for permanent block date/time boundaries are stored as SQL `NULL`. In the API JSON response, these boundary properties are omitted entirely (not returned as `null`).
-- All four date/time boundary fields (`start_date`, `stop_date`, `start_time`, `stop_time`) must either all be present or all be absent. Partial boundary fields, explicit null values, or empty strings return `400 Bad Request`.
+- For timed blocks, `start_date`, `stop_date`, `start_time`, and `stop_time` are UTC boundary values prepared by Userportal / `owsub`.
+- Userportal / `owsub` owns subscriber or venue timezone resolution and converts the enforcement window to UTC before calling parental-control.
+- Parental-control does not resolve or convert timezone context. It interprets timed boundaries as UTC and compares them with the current UTC date and time.
+- Database columns for permanent block date/time boundaries are stored as SQL `NULL`. In the API JSON response, these boundary properties are omitted entirely.
+- All four date/time boundary fields must either all be present or all be absent. Partial boundary fields, explicit null values, or empty strings return `400 Bad Request`.
 - Sending a duplicate client-access request for a client MAC that already has an active rule returns `409 Conflict` (`client_access_exists`). The original database row remains unchanged. The client must be unpaused before re-pausing.
-- Parental-control does not resolve or convert timezone context for this API.
 
 | ID | Name | Expected Result |
 |---|---|---|
@@ -178,8 +181,8 @@ Notes:
 | TC-PAUSE-CLIENT-017 | Invalid time format in enforcement window | `400 Bad Request` |
 | TC-PAUSE-CLIENT-018 | Caller-derived overflow window (`stop_time` <= `start_time` due to overflow) | `400 Bad Request` |
 | TC-PAUSE-CLIENT-019 | Invalid time ordering (`stop_time` <= `start_time`) | `400 Bad Request` |
-| TC-PAUSE-CLIENT-020 | Already-expired timed request is rejected | `400 Bad Request` |
-| TC-PAUSE-CLIENT-021 | Cleanup cycle deletes expired timed rows while preserving permanent rules | `200 OK`; expired timed rows removed; permanent rules remain in DB and snapshot |
+| TC-PAUSE-CLIENT-020 | Already-expired UTC timed request is rejected | `400 Bad Request`; the supplied UTC enforcement window is expired relative to the current UTC time |
+| TC-PAUSE-CLIENT-021 | Cleanup evaluates timed rows using UTC while preserving permanent rules | `200 OK`; UTC-expired timed rows are removed, active timed rows remain, and permanent rules remain in the database and rendered snapshot |
 | TC-UNPAUSE-CLIENT-004 | Remove existing pause-state while other active rows remain | `200 OK`; pause-state removed; remaining rules preserved |
 | TC-PAUSE-CLIENT-021-TEARDOWN | Clean up manual permanent row | `200 OK` |
 | TC-PAUSE-CLIENT-022 | Same-date window (`start_date` equals `stop_date`) is rejected | `400 Bad Request` |
