@@ -498,7 +498,6 @@ paths:
                 $ref: '#/components/schemas/ClientAccessWriteResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/Conflict' }
         '500': { $ref: '#/components/responses/StorageFailure' }
 
   /api/v1/subscribers/{subscriber_id}/client-access/{client_mac}:
