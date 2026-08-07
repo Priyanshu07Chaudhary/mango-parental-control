@@ -652,89 +652,430 @@ func TestParentalControlAPI(t *testing.T) {
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-001",
-			Desc:           "Create pause-state successfully",
+			Desc:           "Create permanent client-access block successfully",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var responseData struct {
-					ConfigRaw [][]string `json:"config-raw"`
+				var resMap map[string]json.RawMessage
+				if err := json.Unmarshal(body, &resMap); err != nil {
+					t.Fatalf("failed to unmarshal response map: %v", err)
 				}
-				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) == 0 {
-					t.Errorf("expected non-empty config-raw, got: %v", err)
+				for _, key := range []string{"start_date", "stop_date", "start_time", "stop_time"} {
+					if _, ok := resMap[key]; ok {
+						t.Errorf("expected property %q to be omitted in API response for permanent block", key)
+					}
+				}
+
+				var res struct {
+					SubscriberID string     `json:"subscriber_id"`
+					ClientMAC    string     `json:"client_mac"`
+					CreatedAt    string     `json:"created_at"`
+					UpdatedAt    string     `json:"updated_at"`
+					ConfigRaw    [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("failed to unmarshal response struct: %v", err)
+				}
+				if res.SubscriberID != vars["subID"] || res.ClientMAC != normalizeMAC(vars["macAddress1"]) {
+					t.Errorf("unexpected subID or mac: got %s, %s", res.SubscriberID, res.ClientMAC)
+				}
+				if res.CreatedAt == "" || res.UpdatedAt == "" {
+					t.Error("expected non-empty created_at and updated_at")
+				}
+
+				var startDate, stopDate, startTime, stopTime *string
+				var createdAt, updatedAt string
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT start_date::text, stop_date::text, start_time::text, stop_time::text, created_at::text, updated_at::text
+					FROM pc_client_access
+					WHERE subscriber_id = $1 AND client_mac = $2
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&startDate, &stopDate, &startTime, &stopTime, &createdAt, &updatedAt)
+				if err != nil {
+					t.Fatalf("failed to query database for permanent row: %v", err)
+				}
+				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
+					t.Error("expected database columns for date/time to be SQL NULL for permanent block")
+				}
+				vars["permCreatedAt"] = createdAt
+				vars["permUpdatedAt"] = updatedAt
+
+				foundRule := false
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 && cmd[0] == "set" && cmd[1] == secName {
+						foundRule = true
+					}
+					if len(cmd) >= 2 && strings.HasPrefix(cmd[1], secName+".") {
+						field := strings.TrimPrefix(cmd[1], secName+".")
+						if field == "start_date" || field == "stop_date" || field == "start_time" || field == "stop_time" {
+							t.Errorf("permanent config-raw should not contain boundary field %s", field)
+						}
+					}
+				}
+				if !foundRule {
+					t.Errorf("expected config-raw to contain section %s", secName)
 				}
 			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-002",
-			Desc:           "Replace existing pause-state for same client successfully",
+			Desc:           "Subsequent permanent block request updates existing permanent block row in place",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var responseData struct {
-					UpdatedAt string `json:"updated_at"`
+				var res struct {
+					SubscriberID string `json:"subscriber_id"`
+					ClientMAC    string `json:"client_mac"`
+					CreatedAt    string `json:"created_at"`
+					UpdatedAt    string `json:"updated_at"`
 				}
-				if err := json.Unmarshal(body, &responseData); err != nil {
-					t.Fatalf("failed to parse response: %v", err)
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
 				}
-				if responseData.UpdatedAt == "" {
-					t.Error("expected non-empty updated_at in response")
+				var count int
+				var startDate, stopDate, startTime, stopTime *string
+				var createdAt, updatedAt string
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT COUNT(*), MAX(start_date::text), MAX(stop_date::text), MAX(start_time::text), MAX(stop_time::text), MAX(created_at::text), MAX(updated_at::text)
+					FROM pc_client_access
+					WHERE subscriber_id = $1 AND client_mac = $2
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startDate, &stopDate, &startTime, &stopTime, &createdAt, &updatedAt)
+				if err != nil {
+					t.Fatalf("failed to query database: %v", err)
 				}
-				vars["updatedAt002"] = responseData.UpdatedAt
+				if count != 1 {
+					t.Errorf("expected exactly 1 database row, got %d", count)
+				}
+				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
+					t.Error("expected database boundary columns to remain SQL NULL after UPSERT")
+				}
+				if createdAt != vars["permCreatedAt"] {
+					t.Errorf("expected created_at to remain unchanged: got %s (orig %s)", createdAt, vars["permCreatedAt"])
+				}
 			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-003",
-			Desc:           "Repeat same pause request with unchanged effective policy",
+			Desc:           "Timed block request for existing permanent block updates row in place to timed block",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var responseData struct {
-					UpdatedAt string `json:"updated_at"`
+				var res struct {
+					StartDate *string    `json:"start_date"`
+					StopDate  *string    `json:"stop_date"`
+					StartTime *string    `json:"start_time"`
+					StopTime  *string    `json:"stop_time"`
+					ConfigRaw [][]string `json:"config-raw"`
 				}
-				var rawMap map[string]any
-				if err := json.Unmarshal(body, &rawMap); err != nil {
-					t.Fatalf("failed to unmarshal JSON: %v", err)
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
 				}
-				val, ok := rawMap["config-raw"]
-				if !ok {
-					t.Error("expected 'config-raw' key to be present in response JSON, but it was missing")
+				var count int
+				var startDate, stopDate, startTime, stopTime *string
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT COUNT(*), MAX(start_date::text), MAX(stop_date::text), MAX(start_time::text), MAX(stop_time::text)
+					FROM pc_client_access
+					WHERE subscriber_id = $1 AND client_mac = $2
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startDate, &stopDate, &startTime, &stopTime)
+				if err != nil {
+					t.Fatalf("failed to query database: %v", err)
 				}
-				if val != nil {
-					t.Errorf("expected 'config-raw' to be null for no-op write, got: %v", val)
+				if count != 1 {
+					t.Errorf("expected exactly 1 database row, got %d", count)
 				}
-
-				if err := json.Unmarshal(body, &responseData); err != nil {
-					t.Fatalf("failed to parse response: %v", err)
+				if startDate == nil || *startDate != "2036-07-08" || startTime == nil || *startTime != "07:30:00" {
+					t.Errorf("expected updated boundary columns in DB after UPSERT, got start_date=%v start_time=%v", startDate, startTime)
 				}
-				if responseData.UpdatedAt != vars["updatedAt002"] {
-					t.Errorf("expected updated_at to remain unchanged, but it changed from %q to %q", vars["updatedAt002"], responseData.UpdatedAt)
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				hasStartDate, hasStopDate, hasStartTime, hasStopTime := false, false, false, false
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 {
+						if cmd[1] == secName+".start_date" {
+							hasStartDate = true
+						}
+						if cmd[1] == secName+".stop_date" {
+							hasStopDate = true
+						}
+						if cmd[1] == secName+".start_time" {
+							hasStartTime = true
+						}
+						if cmd[1] == secName+".stop_time" {
+							hasStopTime = true
+						}
+					}
+				}
+				if !hasStartDate || !hasStopDate || !hasStartTime || !hasStopTime {
+					t.Errorf("expected all 4 boundary commands in config-raw after permanent -> timed transition, got flags: %v %v %v %v", hasStartDate, hasStopDate, hasStartTime, hasStopTime)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-001",
+			Desc:           "Delete permanent block rule successfully",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var res map[string]json.RawMessage
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if string(res["config-raw"]) != "[]" {
+					t.Errorf("expected empty config-raw [], got: %s", string(res["config-raw"]))
 				}
 			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-004",
-			Desc:           "Missing required field in request body",
+			Desc:           "Create timed pause-state successfully",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
-			ExpectedStatus: http.StatusBadRequest,
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var res struct {
+					StartDate *string    `json:"start_date"`
+					StopDate  *string    `json:"stop_date"`
+					StartTime *string    `json:"start_time"`
+					StopTime  *string    `json:"stop_time"`
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				if res.StartDate == nil || res.StopDate == nil || res.StartTime == nil || res.StopTime == nil {
+					t.Error("expected non-nil boundary fields in timed block response")
+				}
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				hasStartDate, hasStopDate, hasStartTime, hasStopTime := false, false, false, false
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 {
+						if cmd[1] == secName+".start_date" {
+							hasStartDate = true
+						}
+						if cmd[1] == secName+".stop_date" {
+							hasStopDate = true
+						}
+						if cmd[1] == secName+".start_time" {
+							hasStartTime = true
+						}
+						if cmd[1] == secName+".stop_time" {
+							hasStopTime = true
+						}
+					}
+				}
+				if !hasStartDate || !hasStopDate || !hasStartTime || !hasStopTime {
+					t.Errorf("expected all 4 boundary commands in config-raw, got flags: %v %v %v %v", hasStartDate, hasStopDate, hasStartTime, hasStopTime)
+				}
+			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-005",
-			Desc:           "Invalid MAC address format",
+			Desc:           "Subsequent timed block request updates existing timed block times in place",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"invalid-mac","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
-			ExpectedStatus: http.StatusBadRequest,
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var count int
+				var startTime, stopTime string
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT COUNT(*), start_time::text, stop_time::text
+					FROM pc_client_access
+					WHERE subscriber_id = $1 AND client_mac = $2
+					GROUP BY start_time, stop_time
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startTime, &stopTime)
+				if err != nil {
+					t.Fatalf("failed to query database: %v", err)
+				}
+				if count != 1 {
+					t.Errorf("expected exactly 1 database row, got %d", count)
+				}
+				if startTime != "08:30:00" || stopTime != "09:00:00" {
+					t.Errorf("expected updated times 08:30:00 - 09:00:00, got %s - %s", startTime, stopTime)
+				}
+			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-006",
+			Desc:           "Permanent block request for existing timed block updates row in place to permanent block",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var res struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				var count int
+				var startDate, stopDate, startTime, stopTime *string
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT COUNT(*), MAX(start_date::text), MAX(stop_date::text), MAX(start_time::text), MAX(stop_time::text)
+					FROM pc_client_access
+					WHERE subscriber_id = $1 AND client_mac = $2
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startDate, &stopDate, &startTime, &stopTime)
+				if err != nil {
+					t.Fatalf("failed to query database: %v", err)
+				}
+				if count != 1 {
+					t.Errorf("expected exactly 1 database row, got %d", count)
+				}
+				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
+					t.Errorf("expected boundary columns to reset to SQL NULL for permanent block, got %v %v %v %v", startDate, stopDate, startTime, stopTime)
+				}
+				foundRule := false
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 && cmd[0] == "set" && cmd[1] == secName {
+						foundRule = true
+					}
+					if len(cmd) >= 2 && strings.HasPrefix(cmd[1], secName+".") {
+						field := strings.TrimPrefix(cmd[1], secName+".")
+						if field == "start_date" || field == "stop_date" || field == "start_time" || field == "stop_time" {
+							t.Errorf("config-raw after timed -> permanent transition should not contain boundary field %s", field)
+						}
+					}
+				}
+				if !foundRule {
+					t.Errorf("expected config-raw to contain section %s after timed -> permanent transition", secName)
+				}
+			},
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-007",
+			Desc:           "Simultaneous permanent and timed client-access rules for different MACs",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress2}"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var count int
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT COUNT(*) FROM pc_client_access WHERE subscriber_id = $1
+				`, vars["subID"]).Scan(&count)
+				if err != nil {
+					t.Fatalf("failed to count client-access rows: %v", err)
+				}
+				if count != 2 {
+					t.Errorf("expected 2 active client-access rows in DB, got %d", count)
+				}
+				var res struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				hasTimed, hasPerm := false, false
+				secTimed := "firewall.pc_client_access_" + strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secPerm := "firewall.pc_client_access_" + strings.ReplaceAll(normalizeMAC(vars["macAddress2"]), ":", "_")
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 {
+						if cmd[1] == secTimed {
+							hasTimed = true
+						}
+						if cmd[1] == secPerm {
+							hasPerm = true
+						}
+					}
+				}
+				if !hasTimed || !hasPerm {
+					t.Errorf("expected config-raw to contain both timed (%v) and permanent (%v) sections", hasTimed, hasPerm)
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-002",
+			Desc:           "Delete timed block rule successfully",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-003",
+			Desc:           "Delete permanent block rule successfully",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress2}",
+			ExpectedStatus: http.StatusOK,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-008",
+			Desc:           "Only start_date present returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-009",
+			Desc:           "Two boundary fields present returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-010",
+			Desc:           "Three boundary fields present returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-011",
+			Desc:           "All four boundary keys present with null values returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":null,"stop_date":null,"start_time":null,"stop_time":null}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-012",
+			Desc:           "One null boundary with other three valid returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":null}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-013",
+			Desc:           "Empty-string boundary values returns 400",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"","stop_date":"","start_time":"","stop_time":""}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-014",
+			Desc:           "Missing required field in request body",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":""}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-015",
+			Desc:           "Invalid MAC address format",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"invalid-mac"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-016",
 			Desc:           "Invalid date format in enforcement window",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -742,7 +1083,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-007",
+			ID:             "TC-PAUSE-CLIENT-017",
 			Desc:           "Invalid time format in enforcement window",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -750,7 +1091,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-008",
+			ID:             "TC-PAUSE-CLIENT-018",
 			Desc:           "Caller-derived overflow window (stop_time less than or equal to start_time due to overflow)",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -758,7 +1099,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-009",
+			ID:             "TC-PAUSE-CLIENT-019",
 			Desc:           "Caller-provided quick-block window has invalid time ordering",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -766,59 +1107,104 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-010-SETUP",
-			Desc:           "Insert expired client-access row manually to test cleanup",
+			ID:             "TC-PAUSE-CLIENT-020",
+			Desc:           "Already-expired timed request is rejected with 400 Bad Request",
+			Method:         http.MethodPost,
+			URL:            "/api/v1/subscribers/{subID}/client-access",
+			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2010-01-01","stop_date":"2010-01-02","start_time":"00:00:00","stop_time":"01:00:00"}`,
+			ExpectedStatus: http.StatusBadRequest,
+		},
+		{
+			ID:             "TC-PAUSE-CLIENT-021-SETUP",
+			Desc:           "Insert expired timed row and permanent row manually to test cleanup",
 			Method:         http.MethodGet,
 			URL:            "/livez",
 			ExpectedStatus: http.StatusOK,
 			Setup: func(t *testing.T, vars map[string]string) {
 				_, err := dbConn.Pool.Exec(context.Background(), `
 					INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
-					VALUES ($1, '00:11:22:33:44:55', '2010-01-01', '2010-01-02', '00:00:00', '01:00:00', NOW(), NOW())
+					VALUES ($1, '00:11:22:33:44:55', '2010-01-01', '2010-01-02', '00:00:00', '01:00:00', NOW(), NOW()),
+					       ($1, '00:11:22:33:44:66', NULL, NULL, NULL, NULL, NOW(), NOW())
 				`, vars["subID"])
 				if err != nil {
-					t.Fatalf("failed to insert expired client access: %v", err)
+					t.Fatalf("failed to insert test client access rows: %v", err)
 				}
 			},
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-010",
-			Desc:           "New pause request cleans expired stored rows before rendering effective snapshot",
+			ID:             "TC-PAUSE-CLIENT-021",
+			Desc:           "New pause request cleans expired timed rows while preserving permanent rows",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress2}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress2}"}`,
+			ExpectedStatus: http.StatusOK,
+			Verify: func(t *testing.T, body []byte, vars map[string]string) {
+				var expiredExists, permExists bool
+				err := dbConn.Pool.QueryRow(context.Background(), `
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:55')
+				`, vars["subID"]).Scan(&expiredExists)
+				if err != nil {
+					t.Fatalf("db error: %v", err)
+				}
+				if expiredExists {
+					t.Error("expected expired client-access row to be cleaned up/deleted")
+				}
+
+				err = dbConn.Pool.QueryRow(context.Background(), `
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:66')
+				`, vars["subID"]).Scan(&permExists)
+				if err != nil {
+					t.Fatalf("db error: %v", err)
+				}
+				if !permExists {
+					t.Error("expected permanent client-access row to be preserved during cleanup")
+				}
+
+				var res struct {
+					ConfigRaw [][]string `json:"config-raw"`
+				}
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
+				}
+				hasPermRule := false
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 && cmd[1] == "firewall.pc_client_access_00_11_22_33_44_66" {
+						hasPermRule = true
+					}
+				}
+				if !hasPermRule {
+					t.Error("expected rendered config-raw to preserve permanent rule 00:11:22:33:44:66")
+				}
+			},
+		},
+		{
+			ID:             "TC-UNPAUSE-CLIENT-004",
+			Desc:           "Remove existing pause-state successfully while other active pause-state rows remain",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress2}",
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
 				var exists bool
 				err := dbConn.Pool.QueryRow(context.Background(), `
-					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:55')
+					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = '00:11:22:33:44:66')
 				`, vars["subID"]).Scan(&exists)
 				if err != nil {
 					t.Fatalf("db error: %v", err)
 				}
-				if exists {
-					t.Error("expected expired client-access row to be cleaned up/deleted")
+				if !exists {
+					t.Error("expected permanent client-access row 00:11:22:33:44:66 to remain")
 				}
 			},
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-011",
-			Desc:           "Valid single-block-day request succeeds",
-			Method:         http.MethodPost,
-			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			ID:             "TC-PAUSE-CLIENT-021-TEARDOWN",
+			Desc:           "Clean up manual permanent row 00:11:22:33:44:66",
+			Method:         http.MethodDelete,
+			URL:            "/api/v1/subscribers/{subID}/client-access/00:11:22:33:44:66",
 			ExpectedStatus: http.StatusOK,
-			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var responseData struct {
-					ConfigRaw [][]string `json:"config-raw"`
-				}
-				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) == 0 {
-					t.Errorf("expected non-empty config-raw, got: %v", err)
-				}
-			},
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-012",
+			ID:             "TC-PAUSE-CLIENT-022",
 			Desc:           "Same-date window (start_date equals stop_date) is rejected",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -826,7 +1212,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-013",
+			ID:             "TC-PAUSE-CLIENT-023",
 			Desc:           "Stop date not equal to the next calendar date after start_date is rejected",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
@@ -834,7 +1220,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusBadRequest,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-014-SETUP",
+			ID:             "TC-PAUSE-CLIENT-024-SETUP",
 			Desc:           "Link active schedule to subscriber to set up overlapping block",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/groups",
@@ -849,7 +1235,7 @@ func TestParentalControlAPI(t *testing.T) {
 			},
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-014-SETUP2",
+			ID:             "TC-PAUSE-CLIENT-024-SETUP2",
 			Desc:           "Add device to overlap group",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/groups/{overlapGroupID}/devices",
@@ -857,7 +1243,7 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusOK,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-014-SETUP3",
+			ID:             "TC-PAUSE-CLIENT-024-SETUP3",
 			Desc:           "Link schedule to overlap group",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/groups/{overlapGroupID}/schedules",
@@ -865,11 +1251,11 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusOK,
 		},
 		{
-			ID:             "TC-PAUSE-CLIENT-014",
-			Desc:           "Pause client that is already covered by active group/schedule policy",
+			ID:             "TC-PAUSE-CLIENT-024",
+			Desc:           "Pause client permanently when already covered by active group/schedule policy",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
 			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
 				var responseData struct {
@@ -877,25 +1263,6 @@ func TestParentalControlAPI(t *testing.T) {
 				}
 				if err := json.Unmarshal(body, &responseData); err != nil || len(responseData.ConfigRaw) < 4 {
 					t.Errorf("expected merged config-raw containing multiple policies, got: %v", err)
-				}
-			},
-		},
-		{
-			ID:             "TC-UNPAUSE-CLIENT-001",
-			Desc:           "Remove existing pause-state successfully while other active pause-state rows remain",
-			Method:         http.MethodDelete,
-			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress2}",
-			ExpectedStatus: http.StatusOK,
-			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var exists bool
-				err := dbConn.Pool.QueryRow(context.Background(), `
-					SELECT EXISTS(SELECT 1 FROM pc_client_access WHERE subscriber_id = $1 AND client_mac = $2)
-				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&exists)
-				if err != nil {
-					t.Fatalf("db error: %v", err)
-				}
-				if !exists {
-					t.Error("expected macAddress1 client-access row to remain")
 				}
 			},
 		},
@@ -922,15 +1289,15 @@ func TestParentalControlAPI(t *testing.T) {
 			ExpectedStatus: http.StatusOK,
 		},
 		{
-			ID:             "TC-UNPAUSE-CLIENT-002-SETUP",
-			Desc:           "Add pause-state again to prepare for final policy delete",
+			ID:             "TC-UNPAUSE-CLIENT-006-SETUP",
+			Desc:           "Add permanent pause-state again to prepare for final policy delete",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
-			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
+			RequestBody:    `{"client_mac":"{macAddress1}"}`,
 			ExpectedStatus: http.StatusOK,
 		},
 		{
-			ID:             "TC-UNPAUSE-CLIENT-002",
+			ID:             "TC-UNPAUSE-CLIENT-006",
 			Desc:           "Remove existing pause-state when it is the final active parental-control policy across both client-access and group/schedule models",
 			Method:         http.MethodDelete,
 			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",
@@ -951,7 +1318,7 @@ func TestParentalControlAPI(t *testing.T) {
 			},
 		},
 		{
-			ID:             "TC-UNPAUSE-CLIENT-003",
+			ID:             "TC-UNPAUSE-CLIENT-007",
 			Desc:           "Remove pause-state when target client is already absent",
 			Method:         http.MethodDelete,
 			URL:            "/api/v1/subscribers/{subID}/client-access/{macAddress1}",

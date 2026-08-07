@@ -208,22 +208,25 @@ This API is a separate control path from the existing group, group-device, sched
 This API shall support immediate subscriber client pause and unpause behavior for internet access control by device MAC address.
 
 For this API:
-- `pause` means deny internet access for the target client MAC for a caller-prepared enforcement window derived from subscriber-provided duration
+- `pause` means deny internet access for the target client MAC in either permanent or timed mode:
+  * Permanent mode: denies internet access indefinitely (requires only `client_mac`, omitting all date/time boundary fields)
+  * Timed mode: denies internet access for a caller-prepared enforcement window for a single intended block day (requires `client_mac`, `start_date`, `stop_date`, `start_time`, `stop_time`)
 - `unpause` means remove previously stored pause state for the target client MAC and return the updated effective parental-control-owned `config-raw` snapshot when device-side configuration changes
 
-The subscriber shall not provide explicit date inputs for this API.
+Date/time boundary fields must either all be present (timed block) or all be absent (permanent block). Omitting a subset of boundary fields, or providing explicit null or empty values for any boundary field, is invalid and causes the service to return HTTP 400 Bad Request.
 
-The subscriber-facing input for pause behavior is the pause duration.
+Creating a client-access rule for a client MAC that already has an active client-access rule (permanent or timed) replaces the existing client-access rule in place. Permanent and timed rules may replace one another without requiring the caller to delete the existing rule first.
 
-Userportal / `owsub` shall convert the subscriber-provided duration into the effective enforcement window required by this API before calling Mango Parental Control Service.
-
-Userportal / `owsub` shall normalize that enforcement window to the gateway/router local date and time basis before calling Mango Parental Control Service.
-
-Mango Parental Control Service shall not resolve timezone context or convert subscriber-local, server-local, or other non-gateway-local time representations for this API.
-
-For the current phase, this API supports a single intended block day. `start_date` shall be the intended block date, `stop_date` shall be exactly the next calendar date, and `start_time` and `stop_time` shall describe the active interval on the intended block date, with `stop_time` greater than `start_time`. The next-day `stop_date` is required by the supported firewall request shape and does not represent a subscriber-facing multi-day block.
-
-The parental-control service shall receive the caller-prepared enforcement window as part of the internal request and shall use it for persistence, effective policy calculation, and supported firewall-oriented `config-raw` generation.
+For timed blocks in the current phase:
+- Userportal / `owsub` derives the effective enforcement window from the subscriber-facing request.
+- Userportal / `owsub` resolves any required subscriber or venue timezone context and converts the resulting enforcement window to UTC before calling Mango Parental Control Service.
+- `start_date`, `stop_date`, `start_time`, and `stop_time` in the Mango Parental Control request are UTC boundary values.
+- Mango Parental Control Service shall not resolve subscriber, venue, gateway, router, or server timezone context for timed requests.
+- Mango Parental Control Service shall interpret the supplied timed boundary fields as UTC and shall compare them against the current UTC date and time for validation, expiration cleanup, effective-policy evaluation, and `config-raw` rendering.
+- Permanent requests require no timezone calculation or boundary resolution.
+- `start_date` shall be the intended UTC block date, `stop_date` shall be exactly the next UTC calendar date, and `start_time` and `stop_time` shall describe the active interval on the intended UTC block date, with `stop_time` greater than `start_time`.
+- The next-day `stop_date` is required by the supported firewall request shape and does not represent a subscriber-facing multi-day block.
+- For timed requests, the parental-control service shall persist and render the caller-prepared UTC enforcement window without performing additional timezone conversion.
 
 This API shall not require the caller to first create parental-control groups, create schedules, or link schedules to groups through the existing parental-control resource APIs.
 
@@ -238,7 +241,8 @@ For this API:
 | Subscriber validation | `owsub` / Userportal |
 | User validation | `owsub` / Userportal |
 | Device ownership validation | `owsub` / Userportal and supporting topology/provisioning services |
-| Derivation of effective enforcement window from subscriber pause duration | `owsub` / Userportal |
+| Derivation of effective enforcement window from subscriber pause duration (timed mode only) | `owsub` / Userportal |
+| UTC enforcement-window derivation and timezone normalization for timed boundary fields | `owsub` / Userportal |
 | Pause/unpause request construction | `owsub` / Userportal |
 | Stored pause-state persistence for this API | Mango Parental Control Service |
 | Pause/unpause `config-raw` generation | Mango Parental Control Service |
@@ -276,11 +280,9 @@ The service may persist subscriber-scoped pause-state rows required to support t
 
 This stored state shall be separate from the existing group, group-device, schedule, and group-schedule model.
 
-The service may persist only the fields required to:
-- identify the subscriber-scoped target MAC
-- represent the effective pause window
-- determine whether previously stored rows are still in range or are expired at the time of a new API call
-- generate deterministic firewall-oriented `config-raw`
+The service shall persist rows representing either:
+- Permanent blocks: containing subscriber ID, target client MAC, and SQL NULL date/time boundary fields.
+- Timed blocks: containing subscriber ID, target client MAC, and the caller-provided date/time enforcement window (`start_date`, `stop_date`, `start_time`, `stop_time`).
 
 This API does not require subscriber-facing schedule objects, group objects, or persistent enable/disable controls.
 
@@ -291,29 +293,26 @@ Userportal / `owsub` shall remain responsible for local validation before callin
 - user validation
 - device ownership validation
 - determining that the target MAC belongs to the subscriber context
-- constructing the correct internal request body
+- constructing the correct internal request body (permanent or timed)
 
-The parental-control service shall validate only service-owned request and rendering constraints for this API.
-
-At minimum, this includes:
-- required fields needed by this API contract
-- whether the caller-provided enforcement window can be represented by the supported firewall rendering model
-- whether the caller-provided enforcement window matches the supported single-day quick-block window model for this API
-- whether the request can be rendered into supported parental-control-owned `config-raw`
-
-For the current phase, Userportal / `owsub` shall derive the enforcement window before calling this API.
-
-If the caller-provided enforcement window does not match the supported single-block-day request shape for this API — including cases where `stop_date` is not exactly the next calendar date after `start_date`, where `stop_time` is less than or equal to `start_time`, or where the caller-derived pause interval would require blocking past midnight of the intended block date — the service shall reject the request with a client error instead of auto-splitting, auto-extending, or auto-normalizing the request.
+The parental-control service shall validate service-owned request and rendering constraints for this API:
+- Permanent requests require `client_mac` and omitting all date/time boundary fields.
+- Timed requests require `client_mac` and all four date/time boundary fields (`start_date`, `stop_date`, `start_time`, `stop_time`).
+- Partial boundary fields, explicit null values, or empty strings return HTTP 400 Bad Request.
+- For timed requests, the service verifies that `stop_date` is exactly the next UTC calendar date after `start_date`, that `stop_time` is strictly greater than `start_time`, and that the supplied UTC enforcement window has not already expired relative to the current UTC time.
+- Submitting a client-access rule request for an already paused client MAC replaces the existing rule parameters in place.
 
 ### Expiry and Cleanup Behavior
 
 This API does not require a background timer, worker, or thread to update stored pause-state rows continuously.
 
-Instead, when this API is called again, the service shall evaluate previously stored rows against the current effective time window.
+Instead, when this API is called again, the service shall evaluate previously stored timed rows against the current UTC date and time:
 
-- rows that are no longer in range shall be removed before rendering the new effective snapshot
-- rows that remain in range shall continue to contribute to the effective snapshot
-- unpause behavior shall remove the matching subscriber-scoped pause-state row for the target MAC before rendering the updated snapshot
+- Permanent rows, which have SQL `NULL` boundary columns, do not expire and are excluded from cleanup.
+- Timed boundary fields are stored and interpreted as UTC.
+- Timed rows that are expired relative to the current UTC time shall be removed before rendering the new effective snapshot.
+- Timed rows that remain active relative to the current UTC time shall continue to contribute to the effective snapshot.
+- Unpause behavior shall remove the matching subscriber-scoped pause-state row before rendering the updated snapshot.
 
 ### Runtime Behavior
 
@@ -323,8 +322,7 @@ Successful writes through this API shall follow the same effective-policy write 
 - unchanged effective policy shall produce a response body with `config-raw = null`
 - changed effective policy shall produce a full parental-control-owned `config-raw` snapshot
 - when the effective pause-state snapshot becomes empty, the response body shall include `config-raw` as an empty array `[]` so downstream apply logic can clear parental-control-owned device configuration
-
-Retrying the same successful request shall converge to the same stored state and effective device-side result.
+- subsequent create attempts for an existing client MAC replace the existing database row in place
 
 ### Config-Raw Behavior
 
@@ -332,7 +330,7 @@ This API shall generate firewall-oriented parental-control-owned `config-raw` su
 
 Generated `config-raw` for this API shall:
 - remain deterministic for the same effective stored state
-- use only supported firewall fields
+- use only supported firewall fields (permanent rules generate only the MAC block rule without time boundary options; timed rules include the four time boundary options)
 - remain compatible with the existing parental-control full-snapshot response model
 - be returned only when effective device-side configuration changes
 
@@ -350,9 +348,10 @@ This API shall not introduce:
 ### Success Criteria For This API
 
 Requirements are satisfied when:
-- Userportal can reroute subscriber client pause and unpause intent into this new parental-control API
-- Userportal can derive the effective enforcement window from subscriber pause duration and send it to this API
-- the service can persist the pause-state rows required for this API
-- the service can generate valid firewall-oriented `config-raw` for pause and unpause behavior
-- the service returns an error when the caller-provided enforcement window exceeds the supported date boundary
+- Userportal can reroute subscriber client pause and unpause intent into this new parental-control API, choosing either permanent blocking or a derived timed enforcement window
+- the service can persist permanent and timed pause-state rows required for this API
+- the service can generate valid firewall-oriented `config-raw` for permanent and timed pause and unpause behavior (omitting time boundaries for permanent rules)
+- the service replaces existing client-access rules in place when a new block request is sent for an already paused MAC
+- the service returns an error when timed enforcement windows are invalid or exceed the supported date boundary
+- the service preserves permanent rules across cleanup cycles while deleting expired timed rows
 - the service remains consistent with the existing passive internal-service ownership model
