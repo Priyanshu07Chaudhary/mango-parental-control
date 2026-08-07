@@ -479,7 +479,7 @@ paths:
         For timed blocks, `start_date` must be the intended block date, `stop_date` must be exactly the next calendar date,
         and `start_time` and `stop_time` must describe the active interval on the intended block date with `stop_time` greater than `start_time`.
         Omitting a subset of date/time fields or sending explicit null or empty values for any date/time field is invalid and returns HTTP 400 Bad Request.
-        Sending a request for a client MAC that already has an active permanent or timed client-access rule returns HTTP 409 Conflict with error code `client_access_exists`.
+        Sending a request for a client MAC that already has an active permanent or timed client-access rule replaces the existing rule parameters in place. A permanent rule can be replaced by a timed rule, a timed rule can be replaced with new time boundaries, and a timed rule can be replaced by a permanent rule.
         The response always contains the `config-raw` field, which will contain the updated commands if the effective parental-control snapshot changes, or `null` for no-op changes.
       parameters:
         - $ref: '#/components/parameters/SubscriberIdPath'

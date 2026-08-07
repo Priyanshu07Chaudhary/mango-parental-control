@@ -155,17 +155,17 @@ Notes:
 - Parental-control does not resolve or convert timezone context. It interprets timed boundaries as UTC and compares them with the current UTC date and time.
 - Database columns for permanent block date/time boundaries are stored as SQL `NULL`. In the API JSON response, these boundary properties are omitted entirely.
 - All four date/time boundary fields must either all be present or all be absent. Partial boundary fields, explicit null values, or empty strings return `400 Bad Request`.
-- Sending a duplicate client-access request for a client MAC that already has an active rule returns `409 Conflict` (`client_access_exists`). The original database row remains unchanged. The client must be unpaused before re-pausing.
+- Sending a client-access request for a client MAC that already has an active rule updates the existing rule parameters in place (UPSERT).
 
 | ID | Name | Expected Result |
 |---|---|---|
 | TC-PAUSE-CLIENT-001 | Create permanent client-access block successfully | `200 OK`; permanent block created in DB with SQL `NULL` boundary columns; date/time properties omitted in JSON response; returns updated `config-raw` snapshot containing MAC rule without time boundary commands |
-| TC-PAUSE-CLIENT-002 | Duplicate permanent block request for existing client | `409 Conflict` (`client_access_exists`); existing permanent database row remains unchanged |
-| TC-PAUSE-CLIENT-003 | Timed block request for existing permanent block client | `409 Conflict` (`client_access_exists`); existing permanent database row remains unchanged |
+| TC-PAUSE-CLIENT-002 | Subsequent permanent block request for existing client | `200 OK`; existing permanent database row updated in place (UPSERT); `created_at` preserved |
+| TC-PAUSE-CLIENT-003 | Timed block request for existing permanent block client | `200 OK`; existing permanent database row updated in place to timed block (UPSERT) |
 | TC-UNPAUSE-CLIENT-001 | Delete permanent block rule successfully | `200 OK`; pause-state removed; returns `"config-raw": []` |
 | TC-PAUSE-CLIENT-004 | Create timed pause-state successfully | `200 OK`; timed pause-state created in DB; returns updated `config-raw` snapshot with all four time boundary commands |
-| TC-PAUSE-CLIENT-005 | Duplicate timed block request for existing client | `409 Conflict` (`client_access_exists`); existing timed database row remains unchanged |
-| TC-PAUSE-CLIENT-006 | Permanent block request for existing timed block client | `409 Conflict` (`client_access_exists`); existing timed database row remains unchanged |
+| TC-PAUSE-CLIENT-005 | Subsequent timed block request for existing client | `200 OK`; existing timed database row updated in place with new boundary times (UPSERT) |
+| TC-PAUSE-CLIENT-006 | Permanent block request for existing timed block client | `200 OK`; existing timed database row updated in place to permanent block (UPSERT) |
 | TC-PAUSE-CLIENT-007 | Simultaneous permanent and timed client-access rules for different MACs | `200 OK`; both rules stored in DB; returned `config-raw` snapshot contains both timed and permanent block rules |
 | TC-UNPAUSE-CLIENT-002 | Delete timed block rule successfully | `200 OK`; timed pause-state removed |
 | TC-UNPAUSE-CLIENT-003 | Delete permanent block rule successfully | `200 OK`; permanent pause-state removed |

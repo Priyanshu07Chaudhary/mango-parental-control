@@ -1721,13 +1721,16 @@ func (h *ServiceHandler) CreateClientAccess(c fiber.Ctx) error {
 	err := h.DB.Pool.QueryRow(c.Context(), `
 		INSERT INTO pc_client_access (subscriber_id, client_mac, start_date, stop_date, start_time, stop_time, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		ON CONFLICT (subscriber_id, client_mac)
+		DO UPDATE SET
+			start_date = EXCLUDED.start_date,
+			stop_date = EXCLUDED.stop_date,
+			start_time = EXCLUDED.start_time,
+			stop_time = EXCLUDED.stop_time,
+			updated_at = EXCLUDED.updated_at
 		RETURNING created_at, updated_at
 	`, subID, normalizedMAC, req.StartDate, req.StopDate, req.StartTime, req.StopTime, now).Scan(&createdAt, &updatedAt)
 	if err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return sendError(c, fiber.StatusConflict, "client_access_exists", "Client access rule already exists; unblock the client before creating another rule", nil)
-		}
 		return sendError(c, fiber.StatusInternalServerError, "storage_failure", err.Error(), nil)
 	}
 

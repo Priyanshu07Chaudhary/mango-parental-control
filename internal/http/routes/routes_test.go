@@ -722,19 +722,20 @@ func TestParentalControlAPI(t *testing.T) {
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-002",
-			Desc:           "Duplicate permanent block request returns 409 Conflict and preserves original row",
+			Desc:           "Subsequent permanent block request updates existing permanent block row in place",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
 			RequestBody:    `{"client_mac":"{macAddress1}"}`,
-			ExpectedStatus: http.StatusConflict,
+			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var errRes struct {
-					Error struct {
-						Code string `json:"code"`
-					} `json:"error"`
+				var res struct {
+					SubscriberID string `json:"subscriber_id"`
+					ClientMAC    string `json:"client_mac"`
+					CreatedAt    string `json:"created_at"`
+					UpdatedAt    string `json:"updated_at"`
 				}
-				if err := json.Unmarshal(body, &errRes); err != nil || errRes.Error.Code != "client_access_exists" {
-					t.Errorf("expected error code client_access_exists, got: %v", string(body))
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
 				}
 				var count int
 				var startDate, stopDate, startTime, stopTime *string
@@ -751,28 +752,30 @@ func TestParentalControlAPI(t *testing.T) {
 					t.Errorf("expected exactly 1 database row, got %d", count)
 				}
 				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
-					t.Error("expected database boundary columns to remain SQL NULL after duplicate request")
+					t.Error("expected database boundary columns to remain SQL NULL after UPSERT")
 				}
-				if createdAt != vars["permCreatedAt"] || updatedAt != vars["permUpdatedAt"] {
-					t.Errorf("expected timestamps to remain unchanged: got created_at=%s (orig %s), updated_at=%s (orig %s)", createdAt, vars["permCreatedAt"], updatedAt, vars["permUpdatedAt"])
+				if createdAt != vars["permCreatedAt"] {
+					t.Errorf("expected created_at to remain unchanged: got %s (orig %s)", createdAt, vars["permCreatedAt"])
 				}
 			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-003",
-			Desc:           "Timed block request for existing permanent block returns 409 Conflict and preserves original row",
+			Desc:           "Timed block request for existing permanent block updates row in place to timed block",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
 			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"07:30:00","stop_time":"08:00:00"}`,
-			ExpectedStatus: http.StatusConflict,
+			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var errRes struct {
-					Error struct {
-						Code string `json:"code"`
-					} `json:"error"`
+				var res struct {
+					StartDate *string    `json:"start_date"`
+					StopDate  *string    `json:"stop_date"`
+					StartTime *string    `json:"start_time"`
+					StopTime  *string    `json:"stop_time"`
+					ConfigRaw [][]string `json:"config-raw"`
 				}
-				if err := json.Unmarshal(body, &errRes); err != nil || errRes.Error.Code != "client_access_exists" {
-					t.Errorf("expected error code client_access_exists, got: %v", string(body))
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
 				}
 				var count int
 				var startDate, stopDate, startTime, stopTime *string
@@ -787,8 +790,30 @@ func TestParentalControlAPI(t *testing.T) {
 				if count != 1 {
 					t.Errorf("expected exactly 1 database row, got %d", count)
 				}
-				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
-					t.Error("expected database boundary columns to remain SQL NULL (attempted timed block was not saved)")
+				if startDate == nil || *startDate != "2036-07-08" || startTime == nil || *startTime != "07:30:00" {
+					t.Errorf("expected updated boundary columns in DB after UPSERT, got start_date=%v start_time=%v", startDate, startTime)
+				}
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				hasStartDate, hasStopDate, hasStartTime, hasStopTime := false, false, false, false
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 {
+						if cmd[1] == secName+".start_date" {
+							hasStartDate = true
+						}
+						if cmd[1] == secName+".stop_date" {
+							hasStopDate = true
+						}
+						if cmd[1] == secName+".start_time" {
+							hasStartTime = true
+						}
+						if cmd[1] == secName+".stop_time" {
+							hasStopTime = true
+						}
+					}
+				}
+				if !hasStartDate || !hasStopDate || !hasStartTime || !hasStopTime {
+					t.Errorf("expected all 4 boundary commands in config-raw after permanent -> timed transition, got flags: %v %v %v %v", hasStartDate, hasStopDate, hasStartTime, hasStopTime)
 				}
 			},
 		},
@@ -855,20 +880,12 @@ func TestParentalControlAPI(t *testing.T) {
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-005",
-			Desc:           "Duplicate timed block request returns 409 Conflict and preserves original row",
+			Desc:           "Subsequent timed block request updates existing timed block times in place",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
 			RequestBody:    `{"client_mac":"{macAddress1}","start_date":"2036-07-08","stop_date":"2036-07-09","start_time":"08:30:00","stop_time":"09:00:00"}`,
-			ExpectedStatus: http.StatusConflict,
+			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var errRes struct {
-					Error struct {
-						Code string `json:"code"`
-					} `json:"error"`
-				}
-				if err := json.Unmarshal(body, &errRes); err != nil || errRes.Error.Code != "client_access_exists" {
-					t.Errorf("expected error code client_access_exists, got: %v", string(body))
-				}
 				var count int
 				var startTime, stopTime string
 				err := dbConn.Pool.QueryRow(context.Background(), `
@@ -883,43 +900,57 @@ func TestParentalControlAPI(t *testing.T) {
 				if count != 1 {
 					t.Errorf("expected exactly 1 database row, got %d", count)
 				}
-				if startTime != "07:30:00" || stopTime != "08:00:00" {
-					t.Errorf("expected original times 07:30:00 - 08:00:00, got %s - %s", startTime, stopTime)
+				if startTime != "08:30:00" || stopTime != "09:00:00" {
+					t.Errorf("expected updated times 08:30:00 - 09:00:00, got %s - %s", startTime, stopTime)
 				}
 			},
 		},
 		{
 			ID:             "TC-PAUSE-CLIENT-006",
-			Desc:           "Permanent block request for existing timed block returns 409 Conflict and preserves original row",
+			Desc:           "Permanent block request for existing timed block updates row in place to permanent block",
 			Method:         http.MethodPost,
 			URL:            "/api/v1/subscribers/{subID}/client-access",
 			RequestBody:    `{"client_mac":"{macAddress1}"}`,
-			ExpectedStatus: http.StatusConflict,
+			ExpectedStatus: http.StatusOK,
 			Verify: func(t *testing.T, body []byte, vars map[string]string) {
-				var errRes struct {
-					Error struct {
-						Code string `json:"code"`
-					} `json:"error"`
+				var res struct {
+					ConfigRaw [][]string `json:"config-raw"`
 				}
-				if err := json.Unmarshal(body, &errRes); err != nil || errRes.Error.Code != "client_access_exists" {
-					t.Errorf("expected error code client_access_exists, got: %v", string(body))
+				if err := json.Unmarshal(body, &res); err != nil {
+					t.Fatalf("unmarshal error: %v", err)
 				}
 				var count int
-				var startTime, stopTime string
+				var startDate, stopDate, startTime, stopTime *string
 				err := dbConn.Pool.QueryRow(context.Background(), `
-					SELECT COUNT(*), start_time::text, stop_time::text
+					SELECT COUNT(*), MAX(start_date::text), MAX(stop_date::text), MAX(start_time::text), MAX(stop_time::text)
 					FROM pc_client_access
 					WHERE subscriber_id = $1 AND client_mac = $2
-					GROUP BY start_time, stop_time
-				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startTime, &stopTime)
+				`, vars["subID"], normalizeMAC(vars["macAddress1"])).Scan(&count, &startDate, &stopDate, &startTime, &stopTime)
 				if err != nil {
 					t.Fatalf("failed to query database: %v", err)
 				}
 				if count != 1 {
 					t.Errorf("expected exactly 1 database row, got %d", count)
 				}
-				if startTime != "07:30:00" || stopTime != "08:00:00" {
-					t.Errorf("expected original times 07:30:00 - 08:00:00 to remain, got %s - %s", startTime, stopTime)
+				if startDate != nil || stopDate != nil || startTime != nil || stopTime != nil {
+					t.Errorf("expected boundary columns to reset to SQL NULL for permanent block, got %v %v %v %v", startDate, stopDate, startTime, stopTime)
+				}
+				foundRule := false
+				macToken := strings.ReplaceAll(normalizeMAC(vars["macAddress1"]), ":", "_")
+				secName := "firewall.pc_client_access_" + macToken
+				for _, cmd := range res.ConfigRaw {
+					if len(cmd) >= 2 && cmd[0] == "set" && cmd[1] == secName {
+						foundRule = true
+					}
+					if len(cmd) >= 2 && strings.HasPrefix(cmd[1], secName+".") {
+						field := strings.TrimPrefix(cmd[1], secName+".")
+						if field == "start_date" || field == "stop_date" || field == "start_time" || field == "stop_time" {
+							t.Errorf("config-raw after timed -> permanent transition should not contain boundary field %s", field)
+						}
+					}
+				}
+				if !foundRule {
+					t.Errorf("expected config-raw to contain section %s after timed -> permanent transition", secName)
 				}
 			},
 		},

@@ -215,7 +215,7 @@ For this API:
 
 Date/time boundary fields must either all be present (timed block) or all be absent (permanent block). Omitting a subset of boundary fields, or providing explicit null or empty values for any boundary field, is invalid and causes the service to return HTTP 400 Bad Request.
 
-Creating a client-access rule for a client MAC that already has an active client-access rule (permanent or timed) returns HTTP 409 Conflict with error code `client_access_exists`. The caller must unpause the client before creating a new client-access rule.
+Creating a client-access rule for a client MAC that already has an active client-access rule (permanent or timed) replaces the existing client-access rule in place. Permanent and timed rules may replace one another without requiring the caller to delete the existing rule first.
 
 For timed blocks in the current phase:
 - Userportal / `owsub` derives the effective enforcement window from the subscriber-facing request.
@@ -300,7 +300,7 @@ The parental-control service shall validate service-owned request and rendering 
 - Timed requests require `client_mac` and all four date/time boundary fields (`start_date`, `stop_date`, `start_time`, `stop_time`).
 - Partial boundary fields, explicit null values, or empty strings return HTTP 400 Bad Request.
 - For timed requests, the service verifies that `stop_date` is exactly the next UTC calendar date after `start_date`, that `stop_time` is strictly greater than `start_time`, and that the supplied UTC enforcement window has not already expired relative to the current UTC time.
-- Attempting to create a client-access rule for an already paused client MAC returns HTTP 409 Conflict (`client_access_exists`).
+- Submitting a client-access rule request for an already paused client MAC replaces the existing rule parameters in place.
 
 ### Expiry and Cleanup Behavior
 
@@ -322,7 +322,7 @@ Successful writes through this API shall follow the same effective-policy write 
 - unchanged effective policy shall produce a response body with `config-raw = null`
 - changed effective policy shall produce a full parental-control-owned `config-raw` snapshot
 - when the effective pause-state snapshot becomes empty, the response body shall include `config-raw` as an empty array `[]` so downstream apply logic can clear parental-control-owned device configuration
-- duplicate create attempts for an existing client MAC return `409 Conflict` (`client_access_exists`), preserving the existing database row unchanged
+- subsequent create attempts for an existing client MAC replace the existing database row in place
 
 ### Config-Raw Behavior
 
@@ -351,7 +351,7 @@ Requirements are satisfied when:
 - Userportal can reroute subscriber client pause and unpause intent into this new parental-control API, choosing either permanent blocking or a derived timed enforcement window
 - the service can persist permanent and timed pause-state rows required for this API
 - the service can generate valid firewall-oriented `config-raw` for permanent and timed pause and unpause behavior (omitting time boundaries for permanent rules)
-- the service rejects duplicate create requests with HTTP 409 Conflict (`client_access_exists`) while leaving the database row unchanged
+- the service replaces existing client-access rules in place when a new block request is sent for an already paused MAC
 - the service returns an error when timed enforcement windows are invalid or exceed the supported date boundary
 - the service preserves permanent rules across cleanup cycles while deleting expired timed rows
 - the service remains consistent with the existing passive internal-service ownership model
